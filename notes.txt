@@ -1,0 +1,23 @@
+sudo mn -c
+ryu-manager ryu_controller.py 
+
+sudo env "PATH=$PATH" python3 mininet-data-collector.py
+this will produce a csv in mininet folder
+copy and move it to LAtest ML MOdel folder
+rename ML Model code to use latest csv name
+
+retrain
+
+
+terminal1:
+
+source myenv39new/bin/activate
+cd Capstone2/controller/
+ryu-manager ryu_controller.py 
+
+terminal2:
+cd Capstone2/mininet/
+sudo python3 test_topology.p
+
+
+

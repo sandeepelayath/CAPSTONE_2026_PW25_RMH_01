@@ -1,0 +1,463 @@
+{
+  "start_time": null,
+  "end_time": null,
+  "scenarios": {
+    "normal_traffic": {
+      "start_time": "2025-03-12T15:34:15.917803",
+      "duration": 30,
+      "end_time": "2025-03-12T15:34:45.942273"
+    }
+  },
+  "system_metrics": [
+    {
+      "timestamp": "2025-03-12T15:34:15.918148",
+      "cpu_percent": 20.0,
+      "memory_percent": 67.2,
+      "network_io": {
+        "bytes_sent": 1697402261,
+        "bytes_recv": 2062426929,
+        "packets_sent": 33912298,
+        "packets_recv": 33080439,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 574225,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:16.919053",
+      "cpu_percent": 20.7,
+      "memory_percent": 67.1,
+      "network_io": {
+        "bytes_sent": 1711307523,
+        "bytes_recv": 2075721327,
+        "packets_sent": 34206143,
+        "packets_recv": 33367065,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 577858,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:17.920048",
+      "cpu_percent": 19.1,
+      "memory_percent": 67.1,
+      "network_io": {
+        "bytes_sent": 1722964313,
+        "bytes_recv": 2087370665,
+        "packets_sent": 34480499,
+        "packets_recv": 33641335,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 577906,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:18.920706",
+      "cpu_percent": 26.8,
+      "memory_percent": 66.7,
+      "network_io": {
+        "bytes_sent": 1734638213,
+        "bytes_recv": 2099036753,
+        "packets_sent": 34755128,
+        "packets_recv": 33915874,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 577953,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:19.921405",
+      "cpu_percent": 19.4,
+      "memory_percent": 66.7,
+      "network_io": {
+        "bytes_sent": 1746319801,
+        "bytes_recv": 2110718637,
+        "packets_sent": 35030262,
+        "packets_recv": 34191012,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 577953,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:20.922147",
+      "cpu_percent": 20.6,
+      "memory_percent": 66.7,
+      "network_io": {
+        "bytes_sent": 1758925241,
+        "bytes_recv": 2123045947,
+        "packets_sent": 35311211,
+        "packets_recv": 34468666,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 579654,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:21.923010",
+      "cpu_percent": 22.2,
+      "memory_percent": 66.8,
+      "network_io": {
+        "bytes_sent": 1773219617,
+        "bytes_recv": 2136597111,
+        "packets_sent": 35606014,
+        "packets_recv": 34754703,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 584055,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:22.923884",
+      "cpu_percent": 21.7,
+      "memory_percent": 66.8,
+      "network_io": {
+        "bytes_sent": 1787457607,
+        "bytes_recv": 2150101177,
+        "packets_sent": 35900206,
+        "packets_recv": 35040227,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 588403,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:23.924719",
+      "cpu_percent": 20.8,
+      "memory_percent": 66.7,
+      "network_io": {
+        "bytes_sent": 1801636817,
+        "bytes_recv": 2163498301,
+        "packets_sent": 36190360,
+        "packets_recv": 35321154,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 593058,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:24.925612",
+      "cpu_percent": 21.1,
+      "memory_percent": 67.5,
+      "network_io": {
+        "bytes_sent": 1814608549,
+        "bytes_recv": 2176000775,
+        "packets_sent": 36469238,
+        "packets_recv": 35594483,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 595824,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:25.926381",
+      "cpu_percent": 22.4,
+      "memory_percent": 69.3,
+      "network_io": {
+        "bytes_sent": 1825675067,
+        "bytes_recv": 2187067293,
+        "packets_sent": 36729553,
+        "packets_recv": 35854798,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 595824,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:26.927198",
+      "cpu_percent": 21.6,
+      "memory_percent": 68.4,
+      "network_io": {
+        "bytes_sent": 1838862757,
+        "bytes_recv": 2199675245,
+        "packets_sent": 37007161,
+        "packets_recv": 36125553,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 599327,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:27.927811",
+      "cpu_percent": 22.1,
+      "memory_percent": 68.4,
+      "network_io": {
+        "bytes_sent": 1850054283,
+        "bytes_recv": 2210842269,
+        "packets_sent": 37269061,
+        "packets_recv": 36387166,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 599423,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:28.928600",
+      "cpu_percent": 22.7,
+      "memory_percent": 69.6,
+      "network_io": {
+        "bytes_sent": 1861072525,
+        "bytes_recv": 2221860511,
+        "packets_sent": 37528082,
+        "packets_recv": 36646187,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 599423,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:29.929433",
+      "cpu_percent": 21.6,
+      "memory_percent": 69.2,
+      "network_io": {
+        "bytes_sent": 1872132445,
+        "bytes_recv": 2232920431,
+        "packets_sent": 37788074,
+        "packets_recv": 36906179,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 599423,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:30.930411",
+      "cpu_percent": 20.9,
+      "memory_percent": 69.1,
+      "network_io": {
+        "bytes_sent": 1883163597,
+        "bytes_recv": 2243951661,
+        "packets_sent": 38047390,
+        "packets_recv": 37165496,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 599423,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:31.931168",
+      "cpu_percent": 21.2,
+      "memory_percent": 67.9,
+      "network_io": {
+        "bytes_sent": 1896982449,
+        "bytes_recv": 2257020697,
+        "packets_sent": 38330372,
+        "packets_recv": 37439628,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 603906,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:32.931920",
+      "cpu_percent": 21.1,
+      "memory_percent": 66.6,
+      "network_io": {
+        "bytes_sent": 1910879101,
+        "bytes_recv": 2270127415,
+        "packets_sent": 38613385,
+        "packets_recv": 37713318,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 608566,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:33.932584",
+      "cpu_percent": 21.7,
+      "memory_percent": 66.5,
+      "network_io": {
+        "bytes_sent": 1924624433,
+        "bytes_recv": 2283130099,
+        "packets_sent": 38894980,
+        "packets_recv": 37986152,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 612976,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:34.933553",
+      "cpu_percent": 23.9,
+      "memory_percent": 67.4,
+      "network_io": {
+        "bytes_sent": 1937001030,
+        "bytes_recv": 2295124021,
+        "packets_sent": 39164454,
+        "packets_recv": 38251122,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 615238,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:35.934655",
+      "cpu_percent": 20.6,
+      "memory_percent": 68.9,
+      "network_io": {
+        "bytes_sent": 1947839520,
+        "bytes_recv": 2305962511,
+        "packets_sent": 39419155,
+        "packets_recv": 38505823,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 615238,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:36.935546",
+      "cpu_percent": 20.5,
+      "memory_percent": 68.1,
+      "network_io": {
+        "bytes_sent": 1960556010,
+        "bytes_recv": 2318171609,
+        "packets_sent": 39689973,
+        "packets_recv": 38770637,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 618262,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:37.936245",
+      "cpu_percent": 21.9,
+      "memory_percent": 68.3,
+      "network_io": {
+        "bytes_sent": 1971987462,
+        "bytes_recv": 2329466505,
+        "packets_sent": 39950790,
+        "packets_recv": 39029842,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 619078,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:38.936950",
+      "cpu_percent": 23.1,
+      "memory_percent": 69.3,
+      "network_io": {
+        "bytes_sent": 1982863728,
+        "bytes_recv": 2340342849,
+        "packets_sent": 40206407,
+        "packets_recv": 39285460,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 619078,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:39.937586",
+      "cpu_percent": 22.1,
+      "memory_percent": 69.2,
+      "network_io": {
+        "bytes_sent": 1993780136,
+        "bytes_recv": 2351259257,
+        "packets_sent": 40462967,
+        "packets_recv": 39542020,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 619078,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:40.938336",
+      "cpu_percent": 23.0,
+      "memory_percent": 69.0,
+      "network_io": {
+        "bytes_sent": 2004696048,
+        "bytes_recv": 2362175169,
+        "packets_sent": 40719515,
+        "packets_recv": 39798568,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 619078,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:41.939069",
+      "cpu_percent": 20.1,
+      "memory_percent": 67.8,
+      "network_io": {
+        "bytes_sent": 2017877516,
+        "bytes_recv": 2374745747,
+        "packets_sent": 40995476,
+        "packets_recv": 40067318,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 622709,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:42.939667",
+      "cpu_percent": 21.5,
+      "memory_percent": 66.7,
+      "network_io": {
+        "bytes_sent": 2031758156,
+        "bytes_recv": 2387917340,
+        "packets_sent": 41278742,
+        "packets_recv": 40341567,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 627266,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:43.940351",
+      "cpu_percent": 21.2,
+      "memory_percent": 66.7,
+      "network_io": {
+        "bytes_sent": 2045636370,
+        "bytes_recv": 2401036252,
+        "packets_sent": 41562958,
+        "packets_recv": 40616859,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 631747,
+        "dropout": 0
+      }
+    },
+    {
+      "timestamp": "2025-03-12T15:34:44.941208",
+      "cpu_percent": 18.8,
+      "memory_percent": 66.8,
+      "network_io": {
+        "bytes_sent": 2058350742,
+        "bytes_recv": 2413345784,
+        "packets_sent": 41838904,
+        "packets_recv": 40888021,
+        "errin": 0,
+        "errout": 0,
+        "dropin": 634150,
+        "dropout": 0
+      }
+    }
+  ]
+}
