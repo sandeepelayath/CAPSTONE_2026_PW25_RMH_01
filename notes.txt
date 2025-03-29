@@ -1,12 +1,71 @@
-sudo mn -c
-ryu-manager ryu_controller.py 
+#install dependencies
 
+sudo apt update && sudo apt upgrade -y
+sudo apt install mininet
+sudo apt install python3-pip
+sudo apt install openvswitch-switch
+sudo apt update
+sudo apt install tcpdump
+tcpdump --version
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+sudo apt install python3.9 python3.9-venv python3.9-dev -y
+python3.9 --version
+
+#create a virtual environment (for running any pip or pip3 installs)
+python3.9 -m venv myenv39
+source myenv39/bin/activate
+pip install --upgrade pip
+pip install pip-tools
+pip install pyyaml jinja2 typeguard
+pip install eventlet==0.30.2
+
+pip install setuptools==57.5.0
+pip install eventlet==0.30.2
+pip install six==1.16.0
+pip install pbr
+pip install oslo.config
+pip install ryu==4.34
+#pip install kaggle
+pip install pandas numpy scapy scikit-learn
+pip3 install scikit-learn tensorflow keras
+ryu-manager ryu.app.simple_switch
+
+
+
+#test mininet
+one terminal
+(myenv39) sandeep@W18109LT-02:~/MininetIDS$ ryu-manager
+another terrminal
+sandeep@W18109LT-02:~$ sudo mn --topo single,3 --controller=remote,ip=127.0.0.1,port=6633 --switch ovsk,protocols=OpenFlow13
+
+
+#dataset 
+# First, prepare your CIC-IDS2017 dataset, create a data folder inside ML_Model_Latest and keep the csvs there 9github does not allow large csv files to be uploaded)
+cd data_processing
+python preprocess_cicids.py
+
+#collect live network traffic for training
 sudo env "PATH=$PATH" python3 mininet-data-collector.py
 this will produce a csv in mininet folder
 copy and move it to LAtest ML MOdel folder
 rename ML Model code to use latest csv name
 
-retrain
+# Then train the model
+cd ../ml_model
+python train_model.py
+
+cd controller
+ryu-manager ryu_controller.py
+cd mininet
+sudo python test_topology.py    or sudo python3 test_topology.py
+
+#Cleanup after running:
+sudo mn -c
+
+
+
+#Execution
 
 
 terminal1:
@@ -17,7 +76,7 @@ ryu-manager ryu_controller.py
 
 terminal2:
 cd Capstone2/mininet/
-sudo python3 test_topology.p
+sudo python3 test_topology.py
 
 
 
