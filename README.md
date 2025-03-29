@@ -33,7 +33,7 @@ This project implements a machine learning approach for detecting anomalies in e
    ```
 
 ## Dataset Preparation
-1. Download the CIC-IDS2017 dataset.
+1. Download the CIC-IDS2017 dataset. (It is also available https://drive.google.com/drive/folders/1kSNKSGeiKaRAoVMY8cIcMQ_FM1rMUdEY)
 2. Store the CSV files inside `ML_Model_Latest/data/` (GitHub does not support large file uploads).
 3. Preprocess the dataset:
    ```bash
