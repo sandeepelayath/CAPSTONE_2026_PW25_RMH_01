@@ -1,8 +1,9 @@
+from datetime import datetime
 import pickle
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.saving import load_model
+from tensorflow.keras.models import load_model
 import time
 import json
 
@@ -14,14 +15,14 @@ class FlowClassifier:
         try:
             self.model = load_model(model_path)
             self.model.compile(optimizer='adam', loss='binary_crossentropy', 
-                             metrics=['accuracy', 'precision', 'recall', 'AUC'])
+                               metrics=['accuracy', 'Precision', 'Recall', 'AUC'])
             
             with open(scaler_path, 'rb') as f:
                 self.scaler = pickle.load(f)
             with open(features_path, 'rb') as f:
                 self.feature_names = pickle.load(f)
                 
-            print(f"✅ Loaded {len(self.feature_names)} feature names")
+            print(f"✅ Loaded model with {len(self.feature_names)} features")
             self.validation_metrics = {'TP': 0, 'FP': 0, 'TN': 0, 'FN': 0}
         except Exception as e:
             print(f"❌ Model loading failed: {e}")
@@ -30,110 +31,126 @@ class FlowClassifier:
             self.feature_names = []
 
     def extract_features(self, flow_stats):
-        """Extracts the relevant features from flow statistics for ML classification."""
+        """Extracts features from flow_stats into a DataFrame row."""
         try:
             features_dict = {feature: 0.0 for feature in self.feature_names}
+            
+            # Basic metrics
+            duration = getattr(flow_stats, 'duration_sec', 0) + getattr(flow_stats, 'duration_nsec', 0) * 1e-9
+            packet_count = getattr(flow_stats, 'packet_count', 0)
+            byte_count = getattr(flow_stats, 'byte_count', 0)
 
-            # Enhanced feature mappings based on CICIDS2017
-            feature_mappings = {
-                "Flow Duration": lambda fs: fs.duration_sec + fs.duration_nsec * 1e-9 if hasattr(fs, 'duration_sec') else 0,
-                "Total Fwd Packets": lambda fs: getattr(fs, 'packet_count', 0),
-                "Total Backward Packets": lambda fs: getattr(fs, 'packet_count_rev', 0),
-                "Total Length of Fwd Packets": lambda fs: getattr(fs, 'byte_count', 0),
-                "Total Length of Bwd Packets": lambda fs: getattr(fs, 'byte_count_rev', 0),
-                "Flow Bytes/s": lambda fs: getattr(fs, 'byte_count', 0) / max(getattr(fs, 'duration_sec', 0.001), 0.001),
-                "Flow Packets/s": lambda fs: getattr(fs, 'packet_count', 0) / max(getattr(fs, 'duration_sec', 0.001), 0.001),
-                "Flow IAT Mean": lambda fs: getattr(fs, 'iat_mean', 0),
-                "Fwd IAT Mean": lambda fs: getattr(fs, 'fwd_iat_mean', 0),
-                "Bwd IAT Mean": lambda fs: getattr(fs, 'bwd_iat_mean', 0),
-                "Fwd Packet Length Mean": lambda fs: getattr(fs, 'fwd_pkt_len_mean', 0),
-                "Bwd Packet Length Mean": lambda fs: getattr(fs, 'bwd_pkt_len_mean', 0),
-                "Flow TCP Flags": lambda fs: sum(1 << i for i, flag in enumerate(getattr(fs, 'tcp_flags', [])) if flag),
+            flow_bytes_per_sec = byte_count / max(duration, 0.001)
+            flow_packets_per_sec = packet_count / max(duration, 0.001)
+            avg_packet_size = byte_count / max(packet_count, 1)
+            iat_mean = duration / max(packet_count, 2)
+
+            tcp_flags = 0
+            if hasattr(flow_stats, 'match') and hasattr(flow_stats.match, 'get'):
+                tcp_flags = flow_stats.match.get('tcp_flags', 0)
+
+            # Mappings
+            mappings = {
+                "Total Length of Fwd Packets": byte_count,
+                "Average Packet Size": avg_packet_size,
+                "Flow Duration": duration,
+                "Flow Packets/s": flow_packets_per_sec,
+                "Flow Bytes/s": flow_bytes_per_sec,
+                "Flow IAT Mean": iat_mean,
+                "Fwd PSH Flags": 1 if (tcp_flags & 0x08) else 0,
+                "Bwd PSH Flags": 0,
+                "SYN Flag Count": 1 if (tcp_flags & 0x02) else 0,
+                "Flow IAT Std": iat_mean * 0.5,
+                "Flow IAT Max": iat_mean * 2,
+                "Flow IAT Min": iat_mean * 0.1
             }
 
-            for feature, func in feature_mappings.items():
-                if feature in self.feature_names:
-                    features_dict[feature] = func(flow_stats)
+            for feature in self.feature_names:
+                if feature in mappings:
+                    features_dict[feature] = mappings[feature]
 
             df = pd.DataFrame([features_dict])[self.feature_names]
             df.replace([np.inf, -np.inf], 0, inplace=True)
             df.fillna(0, inplace=True)
 
-            #print(f"Extracted Features: {df.to_dict(orient='records')}")
             return df
         except Exception as e:
-            print(f"Feature extraction error: {e}")
+            print(f"❌ Feature extraction failed: {e}")
             return None
 
-    def classify_flow(self, flow_stats, anomaly_threshold=0.2):
+    def classify_flow(self, flow_stats, anomaly_threshold=0.17):
         """Classifies a network flow as normal or anomalous."""
         if self.model is None or self.scaler is None:
             print("❌ Model or scaler not loaded")
             return False
-        
+
         try:
             features_df = self.extract_features(flow_stats)
             if features_df is None:
-                print("❌ Feature extraction failed")
                 return False
-            
-            # Scale the extracted features
-            scaled_features = self.scaler.transform(features_df)
-            lstm_input = np.reshape(scaled_features, (scaled_features.shape[0], 1, scaled_features.shape[1]))
+
+            scaled = self.scaler.transform(features_df)
+            lstm_input = scaled.reshape(scaled.shape[0], 1, scaled.shape[1])  # shape: (1, 1, features)
+
             prediction = self.model.predict(lstm_input, verbose=0)
-            
-            #print(f"📊 Prediction Probability: {prediction[0][0]:.4f} | Threshold: {anomaly_threshold}")
-            
-            is_anomaly = bool(prediction[0][0] > anomaly_threshold)
-            
-            # Update validation metrics if ground truth is available
-            if hasattr(flow_stats, 'ground_truth'):
-                self._update_metrics(is_anomaly, flow_stats.ground_truth)
-            
+            prob = prediction[0][0]
+            is_anomaly = prob > anomaly_threshold
+
             if is_anomaly:
                 print("🚨 ALERT: Anomalous Flow Detected!")
-                self._log_anomaly(flow_stats, prediction[0][0])
-            #else:
-                #print("✅ Normal Flow Detected")
-            
+                print(f"📊 Prediction Probability: {prob:.4f} | Threshold: {anomaly_threshold}")
+                self._log_anomaly(flow_stats, prob)
+
             return is_anomaly
         except Exception as e:
-            print(f"Classification error: {e}")
+            print(f"❌ Classification error: {e}")
             return False
 
-    def _update_metrics(self, predicted_anomaly, actual_anomaly):
-        """Updates the confusion matrix metrics."""
-        if predicted_anomaly and actual_anomaly:
-            self.validation_metrics['TP'] += 1
-        elif predicted_anomaly and not actual_anomaly:
-            self.validation_metrics['FP'] += 1
-        elif not predicted_anomaly and actual_anomaly:
-            self.validation_metrics['FN'] += 1
-        else:
-            self.validation_metrics['TN'] += 1
-
     def _log_anomaly(self, flow_stats, confidence):
-        """Logs detailed information about detected anomalies."""
-        anomaly_info = {
-            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'confidence': float(confidence),  # Convert float32 to Python float
-            'flow_info': {
-                'src_ip': getattr(flow_stats, 'ipv4_src', 'unknown'),
-                'dst_ip': getattr(flow_stats, 'ipv4_dst', 'unknown'),
-                'src_port': getattr(flow_stats, 'tcp_src', 'unknown'),
-                'dst_port': getattr(flow_stats, 'tcp_dst', 'unknown'),
-                'protocol': getattr(flow_stats, 'ip_proto', 'unknown'),
+        try:
+            match = flow_stats.match
+            match_dict = match.to_jsondict().get('OFPMatch', {})
+
+            flow_info = {
+                "protocol": match_dict.get('ip_proto', 'unknown'),
+                "src_ip": match_dict.get('ipv4_src', 'unknown'),
+                "dst_ip": match_dict.get('ipv4_dst', 'unknown'),
+                "src_port": match_dict.get('tcp_src', match_dict.get('udp_src', 'unknown')),
+                "dst_port": match_dict.get('tcp_dst', match_dict.get('udp_dst', 'unknown'))
             }
-        }
-        print(f"🔍 Anomaly Details: {json.dumps(anomaly_info, indent=2)}")
+
+            anomaly_log = {
+                "timestamp": str(datetime.now()),
+                "confidence": float(confidence),
+                "flow_info": flow_info,
+                "statistics": {
+                    "duration": flow_stats.duration_sec,
+                    "packets": flow_stats.packet_count,
+                    "bytes": flow_stats.byte_count
+                }
+            }
+
+            with open("anomaly_log.json", "a") as f:
+                json.dump(anomaly_log, f)
+                f.write("\n")
+
+            print(f"⚠️ Anomaly Detected in Flow {match}")
+
+            # Now attempt to remove the flow
+            #match_obj = parser.OFPMatch(**match_dict)
+            #self.remove_flow(self.datapaths.get(flow_stats.datapath_id), match_obj)
+
+        except Exception as e:
+            print(f"❌ Error logging anomaly: {e}")
+
+
 
     def get_metrics(self):
-        """Returns current validation metrics."""
-        metrics = self.validation_metrics.copy()
-        total = sum(metrics.values())
+        m = self.validation_metrics.copy()
+        total = sum(m.values())
         if total > 0:
-            metrics['accuracy'] = (metrics['TP'] + metrics['TN']) / total
-            metrics['precision'] = metrics['TP'] / (metrics['TP'] + metrics['FP']) if (metrics['TP'] + metrics['FP']) > 0 else 0
-            metrics['recall'] = metrics['TP'] / (metrics['TP'] + metrics['FN']) if (metrics['TP'] + metrics['FN']) > 0 else 0
-            metrics['f1_score'] = 2 * (metrics['precision'] * metrics['recall']) / (metrics['precision'] + metrics['recall']) if (metrics['precision'] + metrics['recall']) > 0 else 0
-        return metrics
+            m['accuracy'] = (m['TP'] + m['TN']) / total
+            m['precision'] = m['TP'] / (m['TP'] + m['FP']) if m['TP'] + m['FP'] > 0 else 0
+            m['recall'] = m['TP'] / (m['TP'] + m['FN']) if m['TP'] + m['FN'] > 0 else 0
+            m['f1_score'] = 2 * m['precision'] * m['recall'] / (m['precision'] + m['recall']) if m['precision'] + m['recall'] > 0 else 0
+        return m
