@@ -7,6 +7,7 @@ from tensorflow.keras.models import load_model
 import time
 import json
 
+
 class FlowClassifier:
     def __init__(self, 
                  model_path='../ml_model/lstm_model_combined.keras', 
