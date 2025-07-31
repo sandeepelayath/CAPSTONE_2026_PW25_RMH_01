@@ -69,13 +69,13 @@ sudo python3 test_topology.py
 ## Execution Workflow
 ### Terminal 1 (Controller):
 ```bash
-source myenv39/bin/activate
-cd Capstone2026/controller/
+source ~/myenv39new/bin/activate
+cd Capstone_Phase3/controller/
 ryu-manager ryu_controller.py
 ```
 ### Terminal 2 (Mininet Topology Simulation):
 ```bash
-cd Capstone2026/mininet/
+cd Capstone_Phase3/mininet/
 sudo python3 test_topology.py
 ```
 
