@@ -178,7 +178,7 @@ def log_memory_usage():
     print(f"Memory usage: {memory_info.rss / (1024 ** 2):.2f} MB")
 
 # Random Search
-n_iter = 5  # Reduce from 10 to 5
+n_iter = 10  # NUmber of iteraionsfor random search
 random_search = ParameterSampler(param_distributions, n_iter=n_iter, random_state=42)
 
 best_params = None
