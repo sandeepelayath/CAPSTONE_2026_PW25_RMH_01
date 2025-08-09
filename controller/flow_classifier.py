@@ -6,15 +6,35 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import time
 import json
+from tensorflow.keras.utils import get_custom_objects
 
+# Remove the decorator and manually handle custom objects
+class RandomizedNeuralNetwork(tf.keras.layers.Layer):
+    def __init__(self, hidden_layers_sizes, **kwargs):
+        super().__init__(**kwargs)
+        self.hidden_layers_sizes = hidden_layers_sizes
+        # Initialize layers here if needed
+        # ...
+
+    def call(self, inputs):
+        # Define forward pass logic
+        # ...
+        return inputs
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"hidden_layers_sizes": self.hidden_layers_sizes})
+        return config
 
 class FlowClassifier:
     def __init__(self, 
-                 model_path='../ml_model/lstm_model_combined.keras', 
-                 scaler_path='../ml_model/scaler.pkl', 
-                 features_path='../ml_model/feature_names.pkl'):
+                 model_path='../lstm_finetuned_ml_model/lstm_model_combined.keras', 
+                 scaler_path='../lstm_finetuned_ml_model/scaler.pkl', 
+                 features_path='../lstm_finetuned_ml_model/feature_names.pkl'):
         try:
-            self.model = load_model(model_path)
+            # Register custom objects manually
+            custom_objects = {"RandomizedNeuralNetwork": RandomizedNeuralNetwork}
+            self.model = load_model(model_path, custom_objects=custom_objects)
             self.model.compile(optimizer='adam', loss='binary_crossentropy', 
                                metrics=['accuracy', 'Precision', 'Recall', 'AUC'])
             
@@ -79,7 +99,7 @@ class FlowClassifier:
             print(f"❌ Feature extraction failed: {e}")
             return None
 
-    def classify_flow(self, flow_stats, anomaly_threshold=0.17):
+    def classify_flow(self, flow_stats, anomaly_threshold=0.18):
         """Classifies a network flow as normal or anomalous."""
         if self.model is None or self.scaler is None:
             print("❌ Model or scaler not loaded")
@@ -96,11 +116,14 @@ class FlowClassifier:
             prediction = self.model.predict(lstm_input, verbose=0)
             prob = prediction[0][0]
             is_anomaly = prob > anomaly_threshold
+            #print(f"📊 Prediction Probability: {prob:.4f} | Threshold: {anomaly_threshold}")
+
 
             if is_anomaly:
                 print("🚨 ALERT: Anomalous Flow Detected!")
-                print(f"📊 Prediction Probability: {prob:.4f} | Threshold: {anomaly_threshold}")
                 self._log_anomaly(flow_stats, prob)
+            #else:
+                #print("Normal Flow Detected!")
 
             return is_anomaly
         except Exception as e:

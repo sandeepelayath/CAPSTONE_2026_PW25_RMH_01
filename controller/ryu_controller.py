@@ -26,6 +26,7 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet, ether_types
 from flow_classifier import FlowClassifier
+from mitigation_manager import MitigationManager
 
 # Patch SSL minimum version if needed
 # Safe SSL monkey patch (no recursion)
@@ -51,6 +52,7 @@ class AnomalyDetectionController(app_manager.RyuApp):
         super(AnomalyDetectionController, self).__init__(*args, **kwargs)
         self.datapaths = {}
         self.flow_classifier = FlowClassifier()
+        self.mitigation_manager = MitigationManager(controller_ref=self)
         self.monitor_thread = hub.spawn(self._monitor)
         self.mac_to_port = {}  # MAC learning table
 
@@ -136,22 +138,26 @@ class AnomalyDetectionController(app_manager.RyuApp):
                 if stat.priority == 0:
                     continue
 
-                is_anomaly = self.flow_classifier.classify_flow(stat)
+                anomaly_result = self.flow_classifier.classify_flow(stat)
+                if isinstance(anomaly_result, tuple):
+                    is_anomaly, confidence = anomaly_result
+                else:
+                    is_anomaly, confidence = anomaly_result, 0.8  # Default confidence
+                
                 if is_anomaly:
-                    self.logger.warning(f"🚨 Anomaly Detected in Flow {stat.match}")
+                    self.logger.warning(f"🚨 Anomaly Detected in Flow {stat.match} (Confidence: {confidence:.3f})")
+                    
+                    # Use advanced mitigation strategy
+                    source_ip = self._extract_source_ip(stat)
+                    if source_ip:
+                        self.mitigation_manager.detect_anomaly_and_mitigate(stat, confidence, source_ip=source_ip)
+                    else:
+                        self.logger.warning("⚠️ Could not extract source IP/MAC from flow")
+                    
+                    # Still remove the immediate flow as backup
                     try:
                         datapath = ev.msg.datapath
-                        parser = datapath.ofproto_parser
-                        match = parser.OFPMatch(**stat.match)
-
-                        mod = parser.OFPFlowMod(
-                            datapath=datapath,
-                            command=datapath.ofproto.OFPFC_DELETE,
-                            out_port=datapath.ofproto.OFPP_ANY,
-                            out_group=datapath.ofproto.OFPG_ANY,
-                            match=match
-                        )
-                        datapath.send_msg(mod)
+                        self.remove_flow(datapath, stat.match)
                         self.logger.info(f"🚫 Removed anomalous flow: {stat.match}")
                     except Exception as e:
                         self.logger.error(f"Failed to remove anomalous flow: {e}")
@@ -171,3 +177,81 @@ class AnomalyDetectionController(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPErrorMsg, MAIN_DISPATCHER)
     def _error_msg_handler(self, ev):
         self.logger.error(f"⚠️ OpenFlow Error: {ev.msg}")
+
+    def _extract_source_ip(self, stat):
+        match = stat.match
+        # Try to get from oxm_fields dictionary first
+        if hasattr(match, 'oxm_fields') and match.oxm_fields:
+            if 'eth_src' in match.oxm_fields:
+                return match.oxm_fields['eth_src']
+            elif 'ipv4_src' in match.oxm_fields:
+                return match.oxm_fields['ipv4_src']
+        
+        # Direct string parsing from the match representation as backup
+        match_str = str(match)
+        if 'eth_src' in match_str:
+            import re
+            eth_match = re.search(r"'eth_src': '([^']+)'", match_str)
+            if eth_match:
+                return eth_match.group(1)
+        elif 'ipv4_src' in match_str:
+            import re
+            ip_match = re.search(r"'ipv4_src': '([^']+)'", match_str)
+            if ip_match:
+                return ip_match.group(1)
+        
+        # Fallback: iterate through fields with proper attribute access
+        try:
+            for field in match.fields:
+                # Handle different field types
+                if hasattr(field, 'header') and hasattr(field, 'value'):
+                    if hasattr(field.header, 'type_'):
+                        # Check for ethernet source
+                        if field.header.type_ == 0x80000602:  # OXM_OF_ETH_SRC
+                            return field.value
+                        # Check for IPv4 source  
+                        elif field.header.type_ == 0x80000c04:  # OXM_OF_IPV4_SRC
+                            return field.value
+        except Exception as e:
+            self.logger.debug(f"Could not parse match fields: {e}")
+        
+        return None
+
+    def remove_flow(self, datapath, match):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        # Use oxm_fields if available
+        if hasattr(match, 'oxm_fields') and match.oxm_fields:
+            match_dict = match.oxm_fields.copy()
+        else:
+            # Fallback for field iteration
+            match_dict = {}
+            try:
+                for field in match.fields:
+                    if hasattr(field, 'header') and hasattr(field, 'value'):
+                        if hasattr(field.header, 'type_'):
+                            # Map OXM types to field names
+                            if field.header.type_ == 0x80000602:  # OXM_OF_ETH_SRC
+                                match_dict['eth_src'] = field.value
+                            elif field.header.type_ == 0x80000704:  # OXM_OF_ETH_DST
+                                match_dict['eth_dst'] = field.value
+                            elif field.header.type_ == 0x80000204:  # OXM_OF_IN_PORT
+                                match_dict['in_port'] = field.value
+                            elif field.header.type_ == 0x80000c04:  # OXM_OF_IPV4_SRC
+                                match_dict['ipv4_src'] = field.value
+                            elif field.header.type_ == 0x80000e04:  # OXM_OF_IPV4_DST
+                                match_dict['ipv4_dst'] = field.value
+            except Exception as e:
+                self.logger.error(f"Error parsing match fields: {e}")
+                return
+        
+        mod = parser.OFPFlowMod(
+            datapath=datapath,
+            command=ofproto.OFPFC_DELETE,
+            out_port=ofproto.OFPP_ANY,
+            out_group=ofproto.OFPG_ANY,
+            match=parser.OFPMatch(**match_dict)
+        )
+        datapath.send_msg(mod)
+        self.logger.info("Removed anomalous flow from switch %s", datapath.id)

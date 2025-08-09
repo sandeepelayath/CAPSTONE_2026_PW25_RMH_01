@@ -51,7 +51,7 @@ def start_packet_capture(net, duration=60):
     # host.cmd("pkill tcpdump")  # Or manually kill later
 
 def simulate_anomalous_traffic(net):
-    info("\n[INFO] Simulating normal and anomalous traffic...\n")
+    info("\n[INFO] Simulating  traffic...\n")
     h1, h3, h5, h2, h4, h6 = net.get('h1', 'h3', 'h5', 'h2', 'h4', 'h6')
 
     # Normal Traffic
@@ -62,7 +62,7 @@ def simulate_anomalous_traffic(net):
     time.sleep(20)
 
     # Simulated DDoS Attack
-    info("[ALERT] Simulating DDoS attack from h2, h4, and h6 to h1...\n")
+    info("🚨[ALERT]🚨 Simulating DDoS attack from h2, h4, and h6 to h1...\n")
     attack_pids = []
 
     for attacker in [h2, h4, h6]:
