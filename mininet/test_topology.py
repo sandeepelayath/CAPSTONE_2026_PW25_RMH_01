@@ -61,11 +61,37 @@ def start_packet_capture(net, duration=60):
     # time.sleep(duration)
     # host.cmd("pkill tcpdump")  # Or manually kill later
 
+def reset_controller_state():
+    """Reset controller state to ensure consistent test results"""
+    info("🔄 Resetting controller state for consistent testing...\n")
+    # Clear any existing state files
+    state_files = [
+        '/tmp/traffic_history.json',
+        '/tmp/blacklist.json', 
+        '/tmp/whitelist.json',
+        '/tmp/mitigation_actions.json',
+        'controller/risk_mitigation_actions.json',
+        'controller/mitigation_actions.json'
+    ]
+    
+    for file_path in state_files:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                info(f"  ✅ Cleared {file_path}")
+        except Exception as e:
+            info(f"  ⚠️ Could not clear {file_path}: {e}")
+    
+    info("✅ Controller state reset completed\n")
+
 def test_risk_based_mitigations(net):
     """Comprehensive test suite for all risk-based mitigation logics"""
     info("\n" + "="*80)
     info("🧪 STARTING COMPREHENSIVE RISK-BASED MITIGATION TESTS")
     info("="*80 + "\n")
+    
+    # Reset controller state for consistent results
+    reset_controller_state()
     
     h1, h2, h3, h4, h5, h6, h7, h8 = net.get('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8')
     
@@ -74,7 +100,11 @@ def test_risk_based_mitigations(net):
     
     # Wait for network to stabilize and let initial connectivity be established
     info("⏳ Allowing network to stabilize and establish normal baseline traffic...\n")
-    time.sleep(15)
+    time.sleep(20)  # Increased for more stability
+    
+    # Clear any initial flows that might affect scoring
+    info("🧹 Clearing initial network discovery flows...\n")
+    time.sleep(10)
     
     # Test 1: Establish normal baseline traffic first (very low risk)
     test_baseline_traffic(h1, h2, h7)
@@ -89,6 +119,7 @@ def test_risk_based_mitigations(net):
     test_high_risk_traffic(h5, h1, h2)
     
     # Test 5: Escalating Risk Pattern (Test blacklist escalation)
+    info("🚀 Starting Test 5: Escalating Risk Pattern")
     test_escalating_risk_pattern(h6, h1, h2)
     
     # Test 6: Whitelist Recovery Test (Test false positive handling)
@@ -98,9 +129,15 @@ def test_risk_based_mitigations(net):
     test_mixed_traffic_scenario(net)
     
     # Test 8: Rate Limiting Effectiveness
+    info("🚀 Starting Test 8: Rate Limiting Effectiveness")
     test_rate_limiting_effectiveness(h4, h1)
     
-    # Test 9: Blacklist Learning and Decay
+    # Test 9: Honeypot Tripwire Test
+    info("🚀 Starting Test 9: Honeypot Tripwire Test (h6 -> honeypot)")
+    test_honeypot_tripwire(h6, "10.0.0.9")
+    
+    # Test 10: Blacklist Learning and Decay
+    info("🚀 Starting Test 10: Blacklist Learning and Decay (h8 attacks)")
     test_blacklist_learning(h8, h1, h2)
     
     # Allow time for mitigation system to process
@@ -275,19 +312,30 @@ def test_escalating_risk_pattern(source, target1, target2):
     for round_num in range(3):
         info(f"🔄 Escalation Round {round_num + 1}/3...\n")
         
-        # Generate high-risk traffic multiple times
+        # Generate sustained high-risk traffic (not just single commands)
+        info("  📡 Generating sustained nmap scanning...")
         source.cmd(f'nmap -sS -T5 -p 1-500 {target1.IP()} > /dev/null 2>&1')
-        time.sleep(2)
+        time.sleep(3)
         
-        # SQL injection
-        source.cmd(f'curl -s "http://{target2.IP()}:8081/admin?cmd=DROP%20TABLE%20users" > /dev/null 2>&1')
-        time.sleep(1)
+        # Multiple SQL injection attempts to ensure detection
+        info("  💉 Performing multiple SQL injection attempts...")
+        for i in range(10):
+            source.cmd(f'curl -s "http://{target2.IP()}:8081/admin?cmd=DROP%20TABLE%20users&attempt={i}" > /dev/null 2>&1')
+            time.sleep(0.5)  # Brief pause between attempts
+        
+        # Additional high-frequency requests to ensure anomaly detection
+        info("  🌐 Generating high-frequency HTTP requests...")
+        for i in range(20):
+            source.cmd(f'curl -s "http://{target1.IP()}:8080/attack?id={i}" > /dev/null 2>&1')
+            time.sleep(0.2)
         
         # Wait for mitigation system to process
-        time.sleep(10)
+        info(f"  ⏱️ Waiting for mitigation processing...")
+        time.sleep(15)
         
         info(f"✅ Round {round_num + 1} completed - timeout should be {2**(round_num+1)} times longer\n")
     
+    info("✅ Escalating risk pattern test completed")
     info("💡 Each round should result in exponentially longer blacklist timeouts\n")
 
 def test_whitelist_recovery(source, target1, target2):
@@ -353,9 +401,9 @@ def test_mixed_traffic_scenario(net):
     info("💡 This tests the system's ability to handle multiple risk levels simultaneously\n")
 
 def test_rate_limiting_effectiveness(source, target):
-    """Test Case 7: Verify rate limiting effectiveness"""
+    """Test Case 8: Verify rate limiting effectiveness"""
     info("\n" + "="*60)
-    info("📊 TEST 7: RATE LIMITING EFFECTIVENESS")
+    info("📊 TEST 8: RATE LIMITING EFFECTIVENESS")
     info("="*60)
     info(f"📋 Expected: Measurable reduction in traffic throughput")
     info(f"🎯 Source: {source.name} ({source.IP()})")
@@ -402,9 +450,9 @@ def test_rate_limiting_effectiveness(source, target):
     info("💡 Rate limiting should show measurable traffic reduction\n")
 
 def test_blacklist_learning(source, target1, target2):
-    """Test Case 8: Test blacklist learning and timeout escalation"""
+    """Test Case 10: Test blacklist learning and timeout escalation"""
     info("\n" + "="*60)
-    info("⚫ TEST 8: BLACKLIST LEARNING AND TIMEOUT ESCALATION")
+    info("⚫ TEST 10: BLACKLIST LEARNING AND TIMEOUT ESCALATION")
     info("="*60)
     info(f"📋 Expected: Progressive timeout increases for repeat offenders")
     info(f"🎯 Source: {source.name} ({source.IP()})")
@@ -413,22 +461,86 @@ def test_blacklist_learning(source, target1, target2):
     for attempt in range(3):
         info(f"🔄 Blacklist attempt {attempt + 1}/3...\n")
         
-        # Generate consistent high-risk behavior
-        source.cmd(f'curl -s "http://{target1.IP()}:8080/admin?cmd=DROP%20DATABASE" > /dev/null 2>&1')
+        # Generate sustained high-risk behavior with multiple attack vectors
+        info("  💉 Performing SQL injection barrage...")
+        for i in range(15):
+            source.cmd(f'curl -s "http://{target1.IP()}:8080/admin?cmd=DROP%20DATABASE&id={i}" > /dev/null 2>&1')
+            time.sleep(0.3)
+        
+        info("  🔍 Performing aggressive port scanning...")
         source.cmd(f'nmap -sS -T5 -p 1-200 {target2.IP()} > /dev/null 2>&1')
+        time.sleep(2)
+        
+        # Additional high-frequency attack attempts
+        info("  🌐 Generating attack traffic burst...")
+        for i in range(25):
+            source.cmd(f'curl -s "http://{target1.IP()}:8080/hack?attempt={i}" > /dev/null 2>&1')
+            source.cmd(f'curl -s "http://{target2.IP()}:8081/exploit?id={i}" > /dev/null 2>&1')
+            time.sleep(0.2)
+        
+        # Brute force simulation
+        info("  🔨 Simulating brute force attack...")
+        passwords = ['admin', 'password', '123456', 'root', 'qwerty', 'letmein', 'welcome', 'monkey']
+        for pwd in passwords:
+            for i in range(3):  # Multiple attempts per password
+                source.cmd(f'curl -s "http://{target1.IP()}:8080/login?user=admin&pass={pwd}&try={i}" > /dev/null 2>&1')
+                time.sleep(0.1)
         
         # Record attempt time
         attempt_time = datetime.now().isoformat()
         info(f"   📝 Attempt logged at {attempt_time}")
         
         # Wait for mitigation processing
-        time.sleep(15)
+        info("  ⏱️ Waiting for mitigation processing...")
+        time.sleep(20)  # Longer wait to ensure processing
         
         expected_timeout = 60 * (2 ** attempt)  # Exponential increase
         info(f"   ⏱️ Expected timeout for this attempt: {expected_timeout} seconds\n")
     
     info("✅ Blacklist learning test completed")
     info("💡 Each successive violation should result in longer blacklist periods\n")
+
+def test_honeypot_tripwire(source, honeypot_ip="10.0.0.9"):
+    """Test Case 9: Test honeypot tripwire functionality"""
+    info("\n" + "="*60)
+    info("🍯 TEST 9: HONEYPOT TRIPWIRE TEST")
+    info("="*60)
+    info(f"📋 Expected: Immediate critical risk (1.0) and blocking")
+    info(f"🎯 Source: {source.name} ({source.IP()})")
+    info(f"🍯 Honeypot IP: {honeypot_ip}\n")
+    
+    info("🔄 Generating sustained traffic to honeypot IP...\n")
+    
+    # Multiple rounds of honeypot access attempts to ensure detection
+    for round_num in range(3):
+        info(f"  🍯 Honeypot access round {round_num + 1}/3...")
+        
+        # Multiple connection attempts with different protocols
+        for i in range(10):
+            source.cmd(f'ping -c 1 {honeypot_ip} > /dev/null 2>&1')
+            time.sleep(0.1)
+            source.cmd(f'curl -s --connect-timeout 1 http://{honeypot_ip}:80/ > /dev/null 2>&1')
+            time.sleep(0.1)
+            source.cmd(f'curl -s --connect-timeout 1 http://{honeypot_ip}:443/ > /dev/null 2>&1')
+            time.sleep(0.1)
+            source.cmd(f'nc -w 1 {honeypot_ip} 22 < /dev/null > /dev/null 2>&1')
+            time.sleep(0.1)
+            source.cmd(f'nc -w 1 {honeypot_ip} 3306 < /dev/null > /dev/null 2>&1')
+            time.sleep(0.1)
+        
+        info(f"    📊 Sent 50 honeypot access attempts in round {round_num + 1}")
+        time.sleep(2)  # Wait between rounds
+    
+    # Additional sustained probing to ensure flow generation
+    info("  🔍 Performing sustained honeypot probing...")
+    for i in range(30):
+        source.cmd(f'telnet {honeypot_ip} 23 < /dev/null > /dev/null 2>&1 &')
+        source.cmd(f'curl -s --max-time 1 http://{honeypot_ip}:8080/admin > /dev/null 2>&1')
+        time.sleep(0.2)
+    
+    info("✅ Honeypot tripwire test completed")
+    info("💡 This should result in immediate critical risk and blacklisting\n")
+    time.sleep(10)  # Longer wait to ensure processing
 
 def display_test_results():
     """Display comprehensive test results and system status"""
@@ -438,8 +550,10 @@ def display_test_results():
     
     # Check if risk mitigation log exists
     log_files = [
-        'controller/risk_mitigation_actions.json',
-        'controller/mitigation_actions.json'
+        '../controller/risk_mitigation_actions.json',
+        '../controller/mitigation_actions.json',
+        '/home/sandeep/Capstone_Phase3/controller/risk_mitigation_actions.json',
+        '/home/sandeep/Capstone_Phase3/controller/mitigation_actions.json'
     ]
     
     actions = []
@@ -537,6 +651,7 @@ def start_network():
     info("\n[INFO] Testing network connectivity...\n")
     net.pingAll()
 
+    reset_controller_state()
     test_risk_based_mitigations(net)
 
     info("\n[INFO] Network is now ready for manual testing. Entering CLI...\n")

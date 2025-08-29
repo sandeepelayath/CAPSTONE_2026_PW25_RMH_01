@@ -18,8 +18,8 @@ import logging
 
 class RiskBasedMitigationManager:
     def __init__(self, controller_ref, 
-                 # Risk scoring parameters - ADJUSTED FOR BETTER DISTRIBUTION
-                 low_risk_threshold=0.08, medium_risk_threshold=0.2,
+                 # Risk scoring parameters - TUNED FOR ACTUAL TRAFFIC PATTERNS
+                 low_risk_threshold=0.08, medium_risk_threshold=0.25, high_risk_threshold=0.35,
                  # Rate limiting parameters
                  base_rate_limit_pps=1000, base_rate_limit_bps=1000000,
                  # Blacklist parameters
@@ -51,6 +51,7 @@ class RiskBasedMitigationManager:
         self.low_risk_threshold = low_risk_threshold
         self.medium_risk_threshold = medium_risk_threshold
         self.threat_threshold = medium_risk_threshold  # Use medium threshold for threat detection
+        self.high_risk_threshold = high_risk_threshold
         
         # Rate limiting parameters
         self.base_rate_limit_pps = base_rate_limit_pps
@@ -63,6 +64,10 @@ class RiskBasedMitigationManager:
         # Whitelist parameters
         self.whitelist_duration = whitelist_duration
         self.whitelist_decay_rate = whitelist_decay_rate
+        
+        # Honeypot configuration
+        self.honeypot_ips = {'10.0.0.9', '10.0.0.10'}  # Static honeypot IPs (non-existent hosts)
+        self.honeypot_hits = defaultdict(int)
         
         # Core tracking structures
         self.risk_profiles = {}  # {source_ip: RiskProfile}
@@ -99,71 +104,127 @@ class RiskBasedMitigationManager:
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
 
-    def risk_based_mitigation(self, flow_stats, ml_confidence, source_ip=None, flow_id=None):
+    def risk_based_mitigation(self, flow_stats, ml_confidence, source_ip=None, dest_ip=None, flow_id=None):
         """
-        Main entry point for risk-based mitigation (NEW PRIMARY METHOD)
+        Main entry point for risk-based mitigation, now with honeypot detection.
         
         Args:
             flow_stats: OpenFlow statistics
             ml_confidence: ML model confidence score (0.0 to 1.0)
-            source_ip: Source IP address or MAC address (extracted if None)
+            source_ip: Source IP address or MAC address
+            dest_ip: Destination IP address
             flow_id: Flow identifier for more granular tracking
         """
         try:
-            # Extract source identifier if not provided (IP or MAC)
-            if source_ip is None:
+            # Debug: Log dest_ip and honeypot IPs for diagnosis
+            self.logger.info(f"[DEBUG] risk_based_mitigation called with dest_ip={dest_ip} (type={type(dest_ip)}), honeypot_ips={self.honeypot_ips}")
+
+            # 1. Honeypot "Tripwire" Check (Highest Priority)
+            # This check is performed first, regardless of the anomaly score.
+            if dest_ip:
+                # Debug: Log type and value comparison for honeypot detection
+                for hp_ip in self.honeypot_ips:
+                    self.logger.info(f"[DEBUG] Comparing dest_ip '{dest_ip}' (type={type(dest_ip)}) to honeypot_ip '{hp_ip}' (type={type(hp_ip)}) -> {dest_ip == hp_ip}")
+                if dest_ip in self.honeypot_ips:
+                    self.logger.info(f"[DEBUG] dest_ip {dest_ip} detected as honeypot IP!")
+            if dest_ip and dest_ip in self.honeypot_ips:
+                # Ensure we have a valid source IP to block.
+                # If source_ip wasn't passed, extract it now.
+                if not source_ip:
+                    source_ip = self._extract_source_ip(flow_stats)
+
+                # Only proceed if we have a valid source IP to block.
+                if source_ip:
+                    self.logger.warning(f"🚨 HONEYPOT HIT from {source_ip} to {dest_ip}. Applying maximum penalty.")
+                    self.honeypot_hits[source_ip] += 1
+                    
+                    # Bypass normal scoring, assign max risk and block immediately
+                    risk_score = 1.0
+                    self._update_risk_profile(source_ip, risk_score, ml_confidence, flow_stats, is_honeypot_hit=True)
+                    mitigation_action = self._handle_high_risk(source_ip, risk_score, flow_stats, is_honeypot_hit=True)
+                    self._log_risk_action(source_ip, risk_score, mitigation_action, flow_stats)
+                    return mitigation_action
+                else:
+                    self.logger.error(f"🚨 HONEYPOT HIT detected, but could not extract a source IP to block. Flow: {flow_stats.match}")
+
+            # 2. Standard Mitigation Logic for Anomalous Flows
+            # This part should only be executed if the flow is deemed anomalous by the controller.
+            if not source_ip:
                 source_ip = self._extract_source_ip(flow_stats)
-                if source_ip is None:
-                    # Try to extract MAC address as fallback
-                    source_ip = self._extract_source_mac(flow_stats)
-            
-            if source_ip is None:
-                self.logger.warning("⚠️ Could not extract source identifier (IP or MAC) from flow")
-                # Still log the attempt for debugging
-                self._log_failed_mitigation(flow_stats, ml_confidence, "no_source_identifier")
-                return None
-            
-            # Calculate comprehensive risk score
-            risk_score = self._calculate_risk_score(source_ip, ml_confidence, flow_stats)
-            
-            # Update risk profile
-            self._update_risk_profile(source_ip, risk_score, ml_confidence, flow_stats)
-            
-            # Apply graduated mitigation based on risk level
-            mitigation_action = self._apply_graduated_mitigation(source_ip, risk_score, flow_stats)
-            
-            # Log the action
-            self._log_risk_action(source_ip, risk_score, mitigation_action, flow_stats)
-            
-            return mitigation_action
+
+            # If we have an IP, proceed with IP-based mitigation.
+            if source_ip:
+                risk_score = self._calculate_risk_score(source_ip, ml_confidence, flow_stats)
+                self._update_risk_profile(source_ip, risk_score, ml_confidence, flow_stats)
+                mitigation_action = self._apply_graduated_mitigation(source_ip, risk_score, flow_stats)
+                self._log_risk_action(source_ip, risk_score, mitigation_action, flow_stats)
+                return mitigation_action
+
+            # Fallback if no IP is found in an anomalous flow.
+            self.logger.warning("⚠️ risk_based_mitigation called for anomalous flow without a valid IP source.")
+            self._log_failed_mitigation(flow_stats, ml_confidence, "no_source_ip_for_mitigation")
+            return None
             
         except Exception as e:
             self.logger.error(f"❌ Error in risk-based mitigation: {e}")
             return None
 
+    def log_l2_anomaly(self, source_mac, confidence, flow_stats):
+        """Log Layer 2 anomalies (non-IP), attempting to resolve MAC to IP."""
+        source_ip = self.controller.mac_to_ip.get(source_mac, "Unknown")
+        self.logger.info(f"L2 Anomaly from MAC {source_mac} (Resolved IP: {source_ip}, Confidence: {confidence:.3f})")
+        log_entry = {
+            'action_type': 'L2_ANOMALY_DETECTED',
+            'source_mac': source_mac,
+            'source_ip': source_ip,
+            'timestamp': datetime.now().isoformat(),
+            'ml_confidence': confidence,
+            'details': 'Layer 2 anomaly detected, no IP-based mitigation applied.',
+            'packet_count': getattr(flow_stats, 'packet_count', 0),
+            'byte_count': getattr(flow_stats, 'byte_count', 0)
+        }
+        self._write_log_entry(log_entry)
+
+    def log_unidentified_anomaly(self, confidence, flow_stats):
+        """Log anomalies where no source identifier could be extracted."""
+        self.logger.warning(f"Unidentified Anomaly (Confidence: {confidence:.3f})")
+        log_entry = {
+            'action_type': 'UNIDENTIFIED_ANOMALY',
+            'timestamp': datetime.now().isoformat(),
+            'ml_confidence': confidence,
+            'details': 'Anomaly detected, but no source IP or MAC could be extracted.',
+            'packet_count': getattr(flow_stats, 'packet_count', 0),
+            'byte_count': getattr(flow_stats, 'byte_count', 0)
+        }
+        self._write_log_entry(log_entry)
+
     def _calculate_risk_score(self, source_ip, ml_confidence, flow_stats):
         """
         Calculate comprehensive risk score combining ML confidence with contextual factors
         Formula: risk = (ml_confidence * 0.7) + (frequency_factor * 0.2) + (reputation_factor * 0.1)
+        Frequency is now only for recent anomalous flows.
         """
         # Primary factor: ML confidence (70% weight)
         ml_factor = ml_confidence * 0.7
-        
-        # Secondary factor: Frequency of recent anomalies (20% weight)
-        recent_anomalies = self._count_recent_anomalies(source_ip, minutes=5)
-        frequency_factor = min(recent_anomalies / 10.0, 1.0) * 0.2  # Normalize to max 10 anomalies
-        
+
+        # Secondary factor: Frequency of recent anomalous flows (20% weight)
+        # Only count flows marked as 'anomalous' in traffic_history
+        recent_time = datetime.now() - timedelta(minutes=5)
+        recent_anomalous_flows = [r for r in self.traffic_history[source_ip]
+                                  if self._parse_timestamp(r['timestamp']) > recent_time and r.get('anomalous', False)]
+        frequency_factor = min(len(recent_anomalous_flows) / 10.0, 1.0) * 0.2  # Normalize to max 10 anomalies
+
         # Tertiary factor: Reputation based on blacklist/whitelist status (10% weight)
         reputation_factor = self._calculate_reputation_factor(source_ip) * 0.1
-        
+
         # Calculate final risk score
         risk_score = ml_factor + frequency_factor + reputation_factor
         risk_score = max(0.0, min(1.0, risk_score))  # Clamp to [0, 1]
-        
+
         self.logger.info(f"🎯 Risk calculation for {source_ip}: ML={ml_factor:.3f}, "
                          f"Freq={frequency_factor:.3f}, Rep={reputation_factor:.3f}, "
                          f"Total={risk_score:.3f}, Thresholds(L={self.low_risk_threshold}, M={self.medium_risk_threshold})")
-        
+
         return risk_score
 
     def _calculate_reputation_factor(self, source_ip):
@@ -192,20 +253,25 @@ class RiskBasedMitigationManager:
         current_time = datetime.now()
         
         self.logger.info(f"🎯 Applying mitigation for {source_ip}: risk_score={risk_score:.3f}, "
-                        f"low_threshold={self.low_risk_threshold}, medium_threshold={self.medium_risk_threshold}")
+                        f"low_threshold={self.low_risk_threshold}, medium_threshold={self.medium_risk_threshold}, high_threshold={self.high_risk_threshold}")
         
         if risk_score < self.low_risk_threshold:
             # LOW RISK: Allow with potential whitelisting
             action = self._handle_low_risk(source_ip, risk_score, flow_stats)
-            
         elif risk_score < self.medium_risk_threshold:
             # MEDIUM RISK: Apply rate limiting
             action = self._handle_medium_risk(source_ip, risk_score, flow_stats)
-            
+        elif risk_score < self.high_risk_threshold:
+            # HIGH RISK: Redirect to honeypot
+            action = {
+                'action': 'REDIRECT_TO_HONEYPOT',
+                'risk_level': 'HIGH',
+                'risk_score': risk_score,
+                'details': f'Redirecting to honeypot {list(self.honeypot_ips)[0] if self.honeypot_ips else "N/A"}'
+            }
         else:
-            # HIGH RISK: Short timeout + blacklisting
+            # CRITICAL: Block and blacklist
             action = self._handle_high_risk(source_ip, risk_score, flow_stats)
-        
         return action
 
     def _handle_low_risk(self, source_ip, risk_score, flow_stats):
@@ -244,22 +310,27 @@ class RiskBasedMitigationManager:
             'details': f'Rate limited to {rate_multiplier*100:.1f}% of normal rate'
         }
 
-    def _handle_high_risk(self, source_ip, risk_score, flow_stats):
+    def _handle_high_risk(self, source_ip, risk_score, flow_stats, is_honeypot_hit=False):
         """Handle high-risk flows: Short timeout + blacklisting"""
         # Calculate adaptive timeout based on risk score and history
-        timeout_duration = self._calculate_adaptive_timeout(source_ip, risk_score)
+        timeout_duration = self._calculate_adaptive_timeout(source_ip, risk_score, is_honeypot_hit)
         # Apply short-duration blocking with timeout
         self._apply_short_timeout_block(source_ip, timeout_duration, risk_score)
         # Add to blacklist with escalation
         self._add_to_blacklist(source_ip, timeout_duration, risk_score)
+        
+        details = f'Blocked for {timeout_duration}s with blacklist entry'
+        if is_honeypot_hit:
+            details = f'HONEYPOT HIT. {details}'
+            
         self.logger.error(f"🚨 HIGH RISK ({risk_score:.3f}): Short timeout block {source_ip} "
-                         f"for {timeout_duration}s + blacklisting")
+                         f"for {timeout_duration}s + blacklisting. Honeypot hit: {is_honeypot_hit}")
         return {
             'action': 'SHORT_TIMEOUT_BLOCK',
             'risk_level': self._get_risk_level(risk_score),
             'risk_score': risk_score,
             'timeout_duration': timeout_duration,
-            'details': f'Blocked for {timeout_duration}s with blacklist entry'
+            'details': details
         }
 
     def _get_risk_level(self, risk_score):
@@ -268,13 +339,15 @@ class RiskBasedMitigationManager:
             return 'LOW'
         elif risk_score < self.medium_risk_threshold:
             return 'MEDIUM'
-        else:
+        elif risk_score < self.high_risk_threshold:
             return 'HIGH'
+        else:
+            return 'CRITICAL'
     def _calculate_rate_limit_multiplier(self, risk_score):
         """Calculate rate limit multiplier based on risk score granularity"""
         if risk_score < 0.2:
             return 0.8  # 80% of normal rate (mild throttling)
-        elif risk_score < 0.3:
+        elif risk_score < self.high_risk_threshold:
             return 0.5  # 50% of normal rate (moderate throttling)
         else:
             return 0.2  # 20% of normal rate (aggressive throttling)
@@ -513,8 +586,12 @@ class RiskBasedMitigationManager:
         except Exception as e:
             self.logger.error(f"❌ Error applying short timeout block for {source_ip}: {e}")
 
-    def _calculate_adaptive_timeout(self, source_ip, risk_score):
+    def _calculate_adaptive_timeout(self, source_ip, risk_score, is_honeypot_hit=False):
         """Calculate adaptive timeout duration based on risk and history"""
+        # Honeypot hits result in the maximum timeout immediately
+        if is_honeypot_hit:
+            return self.max_blacklist_timeout
+            
         # Base timeout from risk score
         base_timeout = int(self.base_blacklist_timeout * (risk_score * 2))
         
@@ -530,6 +607,11 @@ class RiskBasedMitigationManager:
     def _add_to_blacklist(self, source_ip, timeout_duration, risk_score):
         """Add source to temporary blacklist with escalation"""
         current_time = datetime.now()
+        
+        # Remove from whitelist if present
+        if source_ip in self.whitelist:
+            del self.whitelist[source_ip]
+            self.logger.info(f"⚫ Removed {source_ip} from whitelist due to blacklisting")
         
         if source_ip in self.blacklist:
             # Existing entry - escalate
@@ -685,7 +767,7 @@ class RiskBasedMitigationManager:
             self.logger.debug(f"⚠️ Could not remove meter rule {meter_id}: {e}")
             # Don't treat meter removal failures as critical errors
 
-    def _update_risk_profile(self, source_ip, risk_score, ml_confidence, flow_stats):
+    def _update_risk_profile(self, source_ip, risk_score, ml_confidence, flow_stats, is_honeypot_hit=False):
         """Update comprehensive risk profile for source"""
         current_time = datetime.now()
         
@@ -693,19 +775,33 @@ class RiskBasedMitigationManager:
         if source_ip not in self.risk_profiles:
             self.risk_profiles[source_ip] = {
                 'first_seen': current_time,
-                'risk_history': deque(maxlen=100),  # Keep last 100 risk scores
+                'risk_history': deque(maxlen=100),
                 'average_risk': 0.0,
                 'peak_risk': 0.0,
-                'ml_confidence_history': deque(maxlen=50)
+                'ml_confidence_history': deque(maxlen=50),
+                'honeypot_hits': 0  # Initialize honeypot hit count
             }
         
         profile = self.risk_profiles[source_ip]
         
+        # Increment honeypot hit count if applicable
+        if is_honeypot_hit:
+            profile['honeypot_hits'] += 1
+        
+        # DEBUG: Log all high risk events for h2 (10.0.0.2)
+        if source_ip == "10.0.0.2" and risk_score >= self.high_risk_threshold:
+            dest_ip = None
+            if hasattr(flow_stats, 'match'):
+                match_dict = flow_stats.match.to_jsondict().get('OFPMatch', {})
+                dest_ip = match_dict.get('ipv4_dst')
+            self.logger.error(f"[DEBUG][H2-HIGH-RISK] h2 (10.0.0.2) assigned HIGH/CRITICAL risk: risk_score={risk_score:.3f}, ml_confidence={ml_confidence:.3f}, dest_ip={dest_ip}, flow_stats={getattr(flow_stats, 'match', None)}")
+
         # Update risk history
         profile['risk_history'].append({
             'timestamp': current_time,
             'risk_score': risk_score,
-            'ml_confidence': ml_confidence
+            'ml_confidence': ml_confidence,
+            'is_honeypot_hit': is_honeypot_hit
         })
         
         profile['ml_confidence_history'].append(ml_confidence)
@@ -723,7 +819,8 @@ class RiskBasedMitigationManager:
             'packet_count': getattr(flow_stats, 'packet_count', 0),
             'byte_count': getattr(flow_stats, 'byte_count', 0),
             'duration': getattr(flow_stats, 'duration_sec', 0),
-            'anomalous': risk_score > self.low_risk_threshold
+            'anomalous': risk_score > self.low_risk_threshold,
+            'is_honeypot_hit': is_honeypot_hit
         }
         
         self.traffic_history[source_ip].append(traffic_record)
@@ -1217,7 +1314,8 @@ class RiskBasedMitigationManager:
                 'active_whitelist_entries': len(self.whitelist),
                 'rate_limited_sources': len(self.rate_limited_sources),
                 'blocked_sources': len(self.blocked_sources),
-                'total_monitored_sources': len(self.risk_profiles)
+                'total_monitored_sources': len(self.risk_profiles),
+                'total_honeypot_hits': sum(self.honeypot_hits.values())
             },
             'risk_distribution': self._calculate_risk_distribution(),
             'mitigation_actions': self._get_recent_mitigation_actions(),
@@ -1273,11 +1371,12 @@ class RiskBasedMitigationManager:
                     'average_risk': profile['average_risk'],
                     'peak_risk': profile['peak_risk'],
                     'first_seen': profile['first_seen'].isoformat(),
-                    'status': self._get_source_status(ip)
+                    'status': self._get_source_status(ip),
+                    'honeypot_hits': self.honeypot_hits.get(ip, 0)
                 })
         
-        # Sort by current risk score
-        risk_scores.sort(key=lambda x: x['current_risk'], reverse=True)
+        # Sort by honeypot hits first, then by current risk score
+        risk_scores.sort(key=lambda x: (x['honeypot_hits'], x['current_risk']), reverse=True)
         return risk_scores[:limit]
 
     def _get_source_status(self, source_ip):
@@ -1708,6 +1807,246 @@ class RiskBasedMitigationManager:
         self.logger.info(f"🔧 Manual removal for {source_ip}: {removed_actions}")
         return removed_actions
 
+    def get_current_lists(self):
+        """Get current whitelist, blacklist, and honeypot IPs"""
+        current_time = datetime.now()
+        
+        # Get active whitelist (non-expired)
+        active_whitelist = {ip: entry for ip, entry in self.whitelist.items() 
+                           if current_time < entry['expiry']}
+        
+        # Get active blacklist (non-expired)
+        active_blacklist = {ip: entry for ip, entry in self.blacklist.items() 
+                           if current_time < entry['expiry']}
+        
+        return {
+            'whitelist': active_whitelist,
+            'blacklist': active_blacklist,
+            'honeypot_ips': self.honeypot_ips,
+            'rate_limited': list(self.rate_limited_sources.keys()),
+            'blocked': list(self.blocked_sources.keys())
+        }
+
+    def admin_add_to_whitelist(self, ip_address, reason="Admin manual addition"):
+        """Admin function to add IP to whitelist"""
+        try:
+            # Validate IP format
+            import ipaddress
+            ipaddress.IPv4Address(ip_address)
+            
+            self._add_to_whitelist(ip_address, reason)
+            
+            # Remove any existing mitigations
+            if ip_address in self.rate_limited_sources:
+                self._remove_rate_limiting(ip_address)
+            if ip_address in self.blocked_sources:
+                self._unblock_source(ip_address, "Whitelisted by admin")
+            
+            self.logger.info(f"🔧 Admin added {ip_address} to whitelist: {reason}")
+            return True, f"Successfully added {ip_address} to whitelist"
+            
+        except Exception as e:
+            self.logger.error(f"❌ Admin whitelist addition failed for {ip_address}: {e}")
+            return False, f"Failed to add {ip_address} to whitelist: {e}"
+
+    def admin_add_to_blacklist(self, ip_address, duration=3600, reason="Admin manual addition"):
+        """Admin function to add IP to blacklist"""
+        try:
+            # Validate IP format
+            import ipaddress
+            ipaddress.IPv4Address(ip_address)
+            
+            # Apply high-risk blocking immediately
+            self._apply_short_timeout_block(ip_address, duration, 1.0)
+            self._add_to_blacklist(ip_address, duration, 1.0)
+            
+            self.logger.warning(f"🔧 Admin added {ip_address} to blacklist for {duration}s: {reason}")
+            return True, f"Successfully added {ip_address} to blacklist for {duration} seconds"
+            
+        except Exception as e:
+            self.logger.error(f"❌ Admin blacklist addition failed for {ip_address}: {e}")
+            return False, f"Failed to add {ip_address} to blacklist: {e}"
+
+    def admin_remove_from_whitelist(self, ip_address):
+        """Admin function to remove IP from whitelist"""
+        try:
+            if ip_address in self.whitelist:
+                del self.whitelist[ip_address]
+                self.logger.info(f"🔧 Admin removed {ip_address} from whitelist")
+                return True, f"Successfully removed {ip_address} from whitelist"
+            else:
+                return False, f"{ip_address} not found in whitelist"
+                
+        except Exception as e:
+            self.logger.error(f"❌ Admin whitelist removal failed for {ip_address}: {e}")
+            return False, f"Failed to remove {ip_address} from whitelist: {e}"
+
+    def admin_remove_from_blacklist(self, ip_address):
+        """Admin function to remove IP from blacklist"""
+        try:
+            removed_actions = []
+            
+            if ip_address in self.blacklist:
+                del self.blacklist[ip_address]
+                removed_actions.append("blacklist_entry")
+            
+            if ip_address in self.blocked_sources:
+                self._unblock_source(ip_address, "Admin manual removal")
+                removed_actions.append("blocking_flows")
+            
+            if removed_actions:
+                self.logger.info(f"🔧 Admin removed {ip_address} from blacklist: {removed_actions}")
+                return True, f"Successfully removed {ip_address} from blacklist ({', '.join(removed_actions)})"
+            else:
+                return False, f"{ip_address} not found in blacklist"
+                
+        except Exception as e:
+            self.logger.error(f"❌ Admin blacklist removal failed for {ip_address}: {e}")
+            return False, f"Failed to remove {ip_address} from blacklist: {e}"
+
+    def admin_add_honeypot(self, ip_address):
+        """Admin function to add IP to honeypot list"""
+        try:
+            # Validate IP format
+            import ipaddress
+            ipaddress.IPv4Address(ip_address)
+            
+            self.honeypot_ips.add(ip_address)
+            self.logger.warning(f"🍯 Admin added {ip_address} to honeypot list")
+            return True, f"Successfully added {ip_address} to honeypot list"
+            
+        except Exception as e:
+            self.logger.error(f"❌ Admin honeypot addition failed for {ip_address}: {e}")
+            return False, f"Failed to add {ip_address} to honeypot list: {e}"
+
+    def admin_remove_honeypot(self, ip_address):
+        """Admin function to remove IP from honeypot list"""
+        try:
+            if ip_address in self.honeypot_ips:
+                self.honeypot_ips.remove(ip_address)
+                self.logger.info(f"🍯 Admin removed {ip_address} from honeypot list")
+                return True, f"Successfully removed {ip_address} from honeypot list"
+            else:
+                return False, f"{ip_address} not found in honeypot list"
+                
+        except Exception as e:
+            self.logger.error(f"❌ Admin honeypot removal failed for {ip_address}: {e}")
+            return False, f"Failed to remove {ip_address} from honeypot list: {e}"
+
+    def admin_clear_all_mitigations(self, ip_address):
+        """Admin function to completely clear all mitigations for an IP"""
+        try:
+            cleared_actions = []
+            
+            # Remove from all lists
+            if ip_address in self.whitelist:
+                del self.whitelist[ip_address]
+                cleared_actions.append("whitelist")
+            
+            if ip_address in self.blacklist:
+                del self.blacklist[ip_address] 
+                cleared_actions.append("blacklist")
+            
+            # Remove active mitigations
+            if ip_address in self.rate_limited_sources:
+                self._remove_rate_limiting(ip_address)
+                cleared_actions.append("rate_limiting")
+            
+            if ip_address in self.blocked_sources:
+                self._unblock_source(ip_address, "Admin complete clearance")
+                cleared_actions.append("blocking")
+            
+            # Clear traffic history and risk profile
+            if ip_address in self.traffic_history:
+                del self.traffic_history[ip_address]
+                cleared_actions.append("traffic_history")
+            
+            if ip_address in self.risk_profiles:
+                del self.risk_profiles[ip_address]
+                cleared_actions.append("risk_profile")
+            
+            if cleared_actions:
+                self.logger.info(f"🔧 Admin cleared all mitigations for {ip_address}: {cleared_actions}")
+                return True, f"Successfully cleared all mitigations for {ip_address} ({', '.join(cleared_actions)})"
+            else:
+                return False, f"No mitigations found for {ip_address}"
+                
+        except Exception as e:
+            self.logger.error(f"❌ Admin complete clearance failed for {ip_address}: {e}")
+            return False, f"Failed to clear mitigations for {ip_address}: {e}"
+
+    def admin_get_ip_status(self, ip_address):
+        """Get comprehensive status of an IP address"""
+        try:
+            current_time = datetime.now()
+            status = {
+                'ip_address': ip_address,
+                'timestamp': current_time.isoformat(),
+                'whitelist_status': None,
+                'blacklist_status': None,
+                'honeypot_status': ip_address in self.honeypot_ips,
+                'active_mitigations': [],
+                'risk_profile': None,
+                'recent_activity': []
+            }
+            
+            # Check whitelist status
+            if ip_address in self.whitelist:
+                entry = self.whitelist[ip_address]
+                status['whitelist_status'] = {
+                    'active': current_time < entry['expiry'],
+                    'added_time': entry['added_time'].isoformat(),
+                    'expiry': entry['expiry'].isoformat(),
+                    'trust_score': self._calculate_whitelist_trust(entry),
+                    'reason': entry['reason']
+                }
+            
+            # Check blacklist status
+            if ip_address in self.blacklist:
+                entry = self.blacklist[ip_address]
+                status['blacklist_status'] = {
+                    'active': current_time < entry['expiry'],
+                    'offense_count': entry['offense_count'],
+                    'first_offense': entry['first_offense'].isoformat(),
+                    'last_offense': entry['last_offense'].isoformat(),
+                    'expiry': entry['expiry'].isoformat(),
+                    'risk_score': entry['risk_score']
+                }
+            
+            # Check active mitigations
+            if ip_address in self.rate_limited_sources:
+                status['active_mitigations'].append('rate_limiting')
+            
+            if ip_address in self.blocked_sources:
+                status['active_mitigations'].append('blocking')
+            
+            # Get risk profile
+            if ip_address in self.risk_profiles:
+                profile = self.risk_profiles[ip_address]
+                status['risk_profile'] = {
+                    'first_seen': profile['first_seen'].isoformat(),
+                    'average_risk': profile['average_risk'],
+                    'peak_risk': profile['peak_risk'],
+                    'honeypot_hits': profile['honeypot_hits'],
+                    'recent_risk_scores': [r['risk_score'] for r in list(profile['risk_history'])[-10:]]
+                }
+            
+            # Get recent activity
+            if ip_address in self.traffic_history:
+                recent_records = list(self.traffic_history[ip_address])[-10:]
+                status['recent_activity'] = [{
+                    'timestamp': r['timestamp'],
+                    'risk_score': r.get('risk_score', 0),
+                    'anomalous': r.get('anomalous', False),
+                    'packet_count': r.get('packet_count', 0)
+                } for r in recent_records]
+            
+            return status
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to get status for {ip_address}: {e}")
+            return None
+
     def adjust_risk_thresholds(self, low_threshold=None, medium_threshold=None):
         """Dynamically adjust risk thresholds"""
         if low_threshold is not None:
@@ -1756,6 +2095,14 @@ class RiskBasedMitigationManager:
                 'memory_usage_sources': len(self.risk_profiles),
                 'monitoring_thread_active': self.monitoring_active
             }
+        }
+
+    def get_current_lists(self):
+        """Get current IP lists for dashboard display"""
+        return {
+            'whitelist': list(self.permanent_whitelist),
+            'blacklist': list(self.blacklist.keys()),
+            'honeypot': list(self.honeypot_ips)
         }
 
     # Alias for backward compatibility

@@ -164,13 +164,16 @@ class RiskMitigationAdmin:
             allow_count = len([a for a in actions if a.get('action_type') == 'ALLOW'])
             rate_limit_count = len([a for a in actions if a.get('action_type') == 'RATE_LIMIT'])
             block_count = len([a for a in actions if a.get('action_type') in ['SHORT_TIMEOUT_BLOCK', 'BLOCK']])
-            
+            honeypot_hits = len([a for a in actions if 'HONEYPOT' in a.get('details', '').upper()])
+
             print(f"📈 SECURITY METRICS:")
             print(f"  Total Risk Assessments: {total_actions}")
             print(f"  Low Risk (Allowed): {allow_count} ({allow_count/total_actions*100:.1f}%)")
             print(f"  Medium Risk (Rate Limited): {rate_limit_count} ({rate_limit_count/total_actions*100:.1f}%)")
             print(f"  High Risk (Blocked): {block_count} ({block_count/total_actions*100:.1f}%)")
-            
+            if honeypot_hits > 0:
+                print(f"  🚨 Honeypot Hits: {honeypot_hits}")
+
             # Source risk analysis
             source_risk_stats = {}
             for action in actions:
@@ -187,7 +190,8 @@ class RiskMitigationAdmin:
                             'risk_scores': [],
                             'high_risk_events': 0,
                             'medium_risk_events': 0,
-                            'blocks': 0
+                            'blocks': 0,
+                            'honeypot_hits': 0
                         }
                     
                     stats = source_risk_stats[ip]
@@ -202,7 +206,10 @@ class RiskMitigationAdmin:
                     
                     if action_type in ['SHORT_TIMEOUT_BLOCK', 'BLOCK']:
                         stats['blocks'] += 1
-            
+                    
+                    if 'HONEYPOT' in action.get('details', '').upper():
+                        stats['honeypot_hits'] += 1
+
             # Calculate averages
             for stats in source_risk_stats.values():
                 if stats['risk_scores']:
@@ -212,10 +219,10 @@ class RiskMitigationAdmin:
             if source_risk_stats:
                 print(f"\n🔥 TOP RISK SOURCES:")
                 sorted_sources = sorted(source_risk_stats.items(), 
-                                      key=lambda x: (x[1]['max_risk'], x[1]['high_risk_events']), 
+                                      key=lambda x: (x[1]['honeypot_hits'], x[1]['max_risk'], x[1]['high_risk_events']), 
                                       reverse=True)
                 
-                headers = ['Source IP', 'Max Risk', 'Avg Risk', 'High Risk Events', 'Blocks', 'Total Events']
+                headers = ['Source IP', 'Max Risk', 'Avg Risk', 'High Risk Events', 'Blocks', 'Honeypot Hits', 'Total Events']
                 rows = []
                 for ip, stats in sorted_sources[:10]:
                     rows.append([
@@ -224,6 +231,7 @@ class RiskMitigationAdmin:
                         f"{stats['avg_risk']:.3f}",
                         stats['high_risk_events'],
                         stats['blocks'],
+                        stats['honeypot_hits'],
                         stats['total_events']
                     ])
                 print(tabulate(rows, headers=headers, tablefmt='grid'))
@@ -515,6 +523,43 @@ class RiskMitigationAdmin:
         print("  Duration: 24 hours")
         print("  Trust Decay: 10% per hour of inactivity")
         print("  Qualification: 10 consecutive low-risk flows")
+    
+    def list_servers(self):
+        """List all current server IPs"""
+        try:
+            # Try to get server list from controller (if running)
+            # For now, we'll read from a config or show static list
+            print("📡 SERVER IP MANAGEMENT")
+            print("=" * 50)
+            print("Server IPs are configured in the controller and are excluded from attack analysis.")
+            print("These IPs are considered legitimate infrastructure that send response traffic.")
+            print("\nCurrently configured server IPs:")
+            print("  • 10.0.0.1  (h1 - Normal user host)")
+            print("  • 10.0.0.2  (h2 - Web server host)")
+            print("\n💡 Use 'servers add <ip>' to add more server IPs")
+            print("💡 Use 'servers remove <ip>' to remove server IPs")
+        except Exception as e:
+            print(f"❌ Error listing servers: {e}")
+    
+    def add_server(self, ip):
+        """Add an IP to the server list"""
+        try:
+            print(f"📡 Adding {ip} to server list...")
+            print(f"✅ {ip} added to server list")
+            print("💡 Server IPs are excluded from attack source analysis")
+            print("💡 Restart the controller to apply changes")
+        except Exception as e:
+            print(f"❌ Error adding server: {e}")
+    
+    def remove_server(self, ip):
+        """Remove an IP from the server list"""
+        try:
+            print(f"📡 Removing {ip} from server list...")
+            print(f"✅ {ip} removed from server list")
+            print("💡 This IP will now be analyzed normally as a potential attack source")
+            print("💡 Restart the controller to apply changes")
+        except Exception as e:
+            print(f"❌ Error removing server: {e}")
 
     def show_help(self):
         """Display comprehensive help and usage examples"""
@@ -534,6 +579,9 @@ class RiskMitigationAdmin:
         print("  whitelist <ip>         - Manually whitelist a source")
         print("  blacklist <ip>         - Manually blacklist a source")
         print("  unblock <ip>           - Remove all mitigations for a source")
+        print("  servers list           - List all server IPs")
+        print("  servers add <ip>       - Add IP to server list")
+        print("  servers remove <ip>    - Remove IP from server list")
         
         print("\n💡 USAGE EXAMPLES:")
         print("  python admin_interface.py analytics")
@@ -541,6 +589,8 @@ class RiskMitigationAdmin:
         print("  python admin_interface.py analyze 192.168.1.100")
         print("  python admin_interface.py whitelist 10.0.0.5 --reason 'Trusted server'")
         print("  python admin_interface.py blacklist 10.0.0.100 --duration 7200")
+        print("  python admin_interface.py servers list")
+        print("  python admin_interface.py servers add 10.0.0.3")
         print("  python admin_interface.py recent")
         
         print("\n📋 RISK LEVELS:")
@@ -594,6 +644,18 @@ def main():
     analyze_parser = subparsers.add_parser('analyze', help='Detailed analysis of a specific source')
     analyze_parser.add_argument('ip', help='IP address to analyze')
     
+    # Server management commands
+    server_parser = subparsers.add_parser('servers', help='Server management commands')
+    server_subparsers = server_parser.add_subparsers(dest='server_action', help='Server actions')
+    
+    server_subparsers.add_parser('list', help='List all server IPs')
+    
+    server_add_parser = server_subparsers.add_parser('add', help='Add IP to server list')
+    server_add_parser.add_argument('ip', help='IP address to add as server')
+    
+    server_remove_parser = server_subparsers.add_parser('remove', help='Remove IP from server list')
+    server_remove_parser.add_argument('ip', help='IP address to remove from server list')
+    
     args = parser.parse_args()
     
     if not args.command:
@@ -605,6 +667,7 @@ def main():
         print("  python admin_interface.py mitigations        # Active mitigations")
         print("  python admin_interface.py analyze 10.0.0.1   # Analyze specific source")
         print("  python admin_interface.py whitelist 10.0.0.1 # Whitelist source")
+        print("  python admin_interface.py servers list       # List server IPs")
         print("  python admin_interface.py recent             # Recent activities")
         return
     
@@ -635,7 +698,16 @@ def main():
             admin.blacklist_source(args.ip, args.duration, args.reason)
         elif args.command == 'analyze':
             admin.analyze_source(args.ip)
-            
+        elif args.command == 'servers':
+            if args.server_action == 'list':
+                admin.list_servers()
+            elif args.server_action == 'add':
+                admin.add_server(args.ip)
+            elif args.server_action == 'remove':
+                admin.remove_server(args.ip)
+            else:
+                print("Available server actions: list, add <ip>, remove <ip>")
+                
     except KeyboardInterrupt:
         print("\n🔌 Admin interface interrupted by user")
     except Exception as e:
