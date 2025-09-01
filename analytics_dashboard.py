@@ -4,8 +4,76 @@ import pandas as pd
 import json
 import os
 from datetime import datetime, timedelta
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
 
-st.set_page_config(page_title="SDN Mitigation Analytics Dashboard", layout="wide")
+st.set_page_config(
+    page_title="SDN Security Analytics Dashboard", 
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://docs.streamlit.io',
+        'Report a bug': None,
+        'About': "# SDN ML-Driven Security Dashboard\nReal-time network security monitoring and threat mitigation analytics."
+    }
+)
+
+# Custom CSS for professional styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 3rem;
+        font-weight: 700;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 0.5rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
+    .sub-header {
+        font-size: 1.2rem;
+        color: #666;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .metric-container {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .danger-metric {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+    }
+    .warning-metric {
+        background: linear-gradient(135deg, #ffa726 0%, #ff7043 100%);
+    }
+    .success-metric {
+        background: linear-gradient(135deg, #66bb6a 0%, #43a047 100%);
+    }
+    .info-metric {
+        background: linear-gradient(135deg, #42a5f5 0%, #1e88e5 100%);
+    }
+    .sidebar .sidebar-content {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+    .stAlert {
+        border-radius: 10px;
+        border-left: 5px solid #1f77b4;
+    }
+    div[data-testid="metric-container"] {
+        background: white;
+        border: 1px solid #ddd;
+        padding: 1rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Auto-refresh: prefer `streamlit-autorefresh` if available, otherwise fall back to a small JS reload.
 # Set AUTO_REFRESH_MS to desired interval in milliseconds (e.g. 3000 = 3 seconds).
@@ -127,48 +195,482 @@ def load_data():
     
     return anomaly_data, mitigation_data
 
-def main():
-    st.title("🛡️ SDN ML-Driven Adaptive QoS Mitigation Dashboard")
-    st.caption("Real-time monitoring and analytics of the risk-based mitigation system")
+def create_risk_distribution_chart(mitigation_df):
+    """Create a risk distribution donut chart"""
+    if mitigation_df.empty or 'action_type' not in mitigation_df.columns:
+        return None
+    
+    action_counts = mitigation_df['action_type'].value_counts()
+    
+    # Map actions to risk levels and colors
+    risk_mapping = {
+        'ALLOW': ('Low Risk', '#28a745'),
+        'RATE_LIMIT': ('Medium Risk', '#ffc107'), 
+        'SHORT_TIMEOUT_BLOCK': ('High Risk', '#fd7e14'),
+        'BLOCK': ('Critical Risk', '#dc3545')
+    }
+    
+    labels = []
+    values = []
+    colors = []
+    
+    for action, count in action_counts.items():
+        risk_level, color = risk_mapping.get(action, (action, '#6c757d'))
+        labels.append(f"{risk_level}<br>({action})")
+        values.append(count)
+        colors.append(color)
+    
+    try:
+        fig = go.Figure(data=[go.Pie(
+            labels=labels, 
+            values=values,
+            hole=0.4,
+            marker_colors=colors,
+            textinfo='label+percent+value',
+            textfont_size=12,
+            hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+        )])
+        
+        fig.update_layout(
+            title={
+                'text': "Risk Distribution by Action Type",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18, 'color': '#1f77b4'}
+            },
+            height=400,
+            showlegend=True,
+            legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.01),
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
+        return fig
+    except ImportError:
+        return None
 
-    refresh = st.button("🔄 Refresh Data")
+def create_risk_timeline_chart(mitigation_df):
+    """Create a timeline chart of risk events"""
+    if mitigation_df.empty or 'timestamp' not in mitigation_df.columns:
+        return None
+    
+    try:
+        # Convert timestamp and create hourly bins
+        mitigation_df['datetime'] = pd.to_datetime(mitigation_df['timestamp'])
+        mitigation_df['hour'] = mitigation_df['datetime'].dt.floor('H')
+        
+        # Group by hour and action type
+        hourly_data = mitigation_df.groupby(['hour', 'action_type']).size().unstack(fill_value=0)
+        
+        fig = go.Figure()
+        
+        colors = {'ALLOW': '#28a745', 'RATE_LIMIT': '#ffc107', 'SHORT_TIMEOUT_BLOCK': '#fd7e14', 'BLOCK': '#dc3545'}
+        
+        for action_type in hourly_data.columns:
+            fig.add_trace(go.Scatter(
+                x=hourly_data.index,
+                y=hourly_data[action_type],
+                mode='lines+markers',
+                name=action_type,
+                line=dict(color=colors.get(action_type, '#6c757d'), width=3),
+                marker=dict(size=6),
+                hovertemplate=f'<b>{action_type}</b><br>Time: %{{x}}<br>Count: %{{y}}<extra></extra>'
+            ))
+        
+        fig.update_layout(
+            title={
+                'text': "Security Events Timeline (Hourly)",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18, 'color': '#1f77b4'}
+            },
+            xaxis_title="Time",
+            yaxis_title="Event Count",
+            height=400,
+            hovermode='x unified',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=50, r=20, t=80, b=50)
+        )
+        return fig
+    except (ImportError, Exception):
+        return None
+
+def create_risk_score_histogram(mitigation_df):
+    """Create a histogram of risk scores"""
+    if mitigation_df.empty or 'risk_score' not in mitigation_df.columns:
+        return None
+    
+    try:
+        risk_scores = pd.to_numeric(mitigation_df['risk_score'], errors='coerce').dropna()
+        
+        fig = go.Figure(data=[go.Histogram(
+            x=risk_scores,
+            nbinsx=20,
+            marker_color='rgba(31, 119, 180, 0.7)',
+            marker_line=dict(color='rgba(31, 119, 180, 1)', width=1),
+            hovertemplate='Risk Score Range: %{x}<br>Count: %{y}<extra></extra>'
+        )])
+        
+        # Add vertical lines for risk thresholds
+        fig.add_vline(x=0.3, line_dash="dash", line_color="orange", 
+                     annotation_text="Medium Risk Threshold", annotation_position="top")
+        fig.add_vline(x=0.7, line_dash="dash", line_color="red",
+                     annotation_text="High Risk Threshold", annotation_position="top")
+        
+        fig.update_layout(
+            title={
+                'text': "Risk Score Distribution",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18, 'color': '#1f77b4'}
+            },
+            xaxis_title="Risk Score",
+            yaxis_title="Frequency",
+            height=400,
+            margin=dict(l=50, r=20, t=60, b=50)
+        )
+        return fig
+    except (ImportError, Exception):
+        return None
+
+def create_top_sources_chart(mitigation_df):
+    """Create a bar chart of top threat sources"""
+    if mitigation_df.empty or 'source_ip' not in mitigation_df.columns:
+        return None
+    
+    try:
+        # Get top 10 sources by event count
+        top_sources = mitigation_df['source_ip'].value_counts().head(10)
+        
+        # Calculate average risk score for each source
+        avg_risk = mitigation_df.groupby('source_ip')['risk_score'].apply(
+            lambda x: pd.to_numeric(x, errors='coerce').mean()
+        )
+        
+        fig = go.Figure()
+        
+        # Color bars based on average risk score
+        colors = ['#dc3545' if avg_risk.get(ip, 0) > 0.7 else 
+                 '#fd7e14' if avg_risk.get(ip, 0) > 0.3 else '#28a745' 
+                 for ip in top_sources.index]
+        
+        fig.add_trace(go.Bar(
+            x=top_sources.index,
+            y=top_sources.values,
+            marker_color=colors,
+            text=top_sources.values,
+            textposition='auto',
+            hovertemplate='<b>%{x}</b><br>Events: %{y}<br>Avg Risk: %{customdata:.3f}<extra></extra>',
+            customdata=[avg_risk.get(ip, 0) for ip in top_sources.index]
+        ))
+        
+        fig.update_layout(
+            title={
+                'text': "Top 10 Source IPs by Event Count",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18, 'color': '#1f77b4'}
+            },
+            xaxis_title="Source IP",
+            yaxis_title="Event Count",
+            height=400,
+            margin=dict(l=50, r=20, t=60, b=50)
+        )
+        return fig
+    except (ImportError, Exception):
+        return None
+
+def main():
+    # Professional header
+    st.markdown('<h1 class="main-header">🛡️ SDN Security Operations Center</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Real-time ML-driven network security monitoring and threat mitigation analytics</p>', unsafe_allow_html=True)
+    
+    # Status indicators
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.info(f"🕒 **System Time:** {current_time} | 🔄 **Auto-refresh:** {AUTO_REFRESH_MS//1000}s | 📊 **Status:** Active")
+
+    refresh = st.button("🔄 Refresh Data", help="Click to manually refresh all data")
     anomaly_data, mitigation_data = load_data()
     anomaly_df = pd.DataFrame(anomaly_data)
     mitigation_df = pd.DataFrame(mitigation_data)
 
+    # Enhanced sidebar with professional styling
+    st.sidebar.markdown("## 📋 Navigation Panel")
     tab = st.sidebar.radio("Select View", [
-        "Analytics Summary",
-        "Active Mitigations", 
-        "IP Lists & Config",
-        "Threat Analysis",
-        "Recent Activities",
-        "Source Analysis"
-    ])
+        "🏠 Executive Dashboard",
+        "🛡️ Active Mitigations", 
+        "⚙️ System Configuration",
+        "🎯 Threat Intelligence",
+        "📈 Analytics & Reports",
+        "🔍 Source Investigation"
+    ], help="Navigate between different dashboard sections")
 
-    if tab == "Analytics Summary":
-        st.header("📊 Risk Analytics Summary")
-        allow_actions = mitigation_df[mitigation_df['action_type'] == 'ALLOW'] if 'action_type' in mitigation_df else pd.DataFrame()
-        rate_limit_actions = mitigation_df[mitigation_df['action_type'] == 'RATE_LIMIT'] if 'action_type' in mitigation_df else pd.DataFrame()
-        block_actions = mitigation_df[mitigation_df['action_type'].isin(['SHORT_TIMEOUT_BLOCK', 'BLOCK'])] if 'action_type' in mitigation_df else pd.DataFrame()
-        st.write(f"Low Risk (Allowed): {len(allow_actions)}")
-        st.write(f"Medium Risk (Rate Limited): {len(rate_limit_actions)}")
-        st.write(f"High Risk (Blocked): {len(block_actions)}")
-        st.write(f"Total Risk Assessments: {len(mitigation_df)}")
-        if not mitigation_df.empty and 'risk_score' in mitigation_df:
-            st.write(f"Average Risk Score: {mitigation_df['risk_score'].astype(float).mean():.3f}")
-            st.write(f"Maximum Risk Score: {mitigation_df['risk_score'].astype(float).max():.3f}")
+    if tab == "🏠 Executive Dashboard":
+        st.markdown("## 📊 Executive Security Dashboard")
+        st.markdown("---")
+        
+        # Key Performance Indicators (KPIs)
+        if not mitigation_df.empty:
+            # Calculate metrics
+            total_events = len(mitigation_df)
+            allow_actions = mitigation_df[mitigation_df['action_type'] == 'ALLOW'] if 'action_type' in mitigation_df.columns else pd.DataFrame()
+            rate_limit_actions = mitigation_df[mitigation_df['action_type'] == 'RATE_LIMIT'] if 'action_type' in mitigation_df.columns else pd.DataFrame()
+            block_actions = mitigation_df[mitigation_df['action_type'].isin(['SHORT_TIMEOUT_BLOCK', 'BLOCK'])] if 'action_type' in mitigation_df.columns else pd.DataFrame()
+            
+            # Risk calculations
+            if 'risk_score' in mitigation_df.columns:
+                risk_scores = pd.to_numeric(mitigation_df['risk_score'], errors='coerce').dropna()
+                avg_risk = risk_scores.mean() if len(risk_scores) > 0 else 0
+                max_risk = risk_scores.max() if len(risk_scores) > 0 else 0
+                high_risk_events = (risk_scores >= 0.7).sum() if len(risk_scores) > 0 else 0
+            else:
+                avg_risk = max_risk = high_risk_events = 0
+            
+            # Recent activity (last 24 hours)
+            if 'timestamp' in mitigation_df.columns:
+                mitigation_df['datetime'] = pd.to_datetime(mitigation_df['timestamp'], errors='coerce')
+                recent_cutoff = datetime.now() - timedelta(hours=24)
+                recent_events = mitigation_df[mitigation_df['datetime'] > recent_cutoff] if 'datetime' in mitigation_df.columns else pd.DataFrame()
+                recent_count = len(recent_events)
+                recent_blocks = len(recent_events[recent_events['action_type'].isin(['SHORT_TIMEOUT_BLOCK', 'BLOCK'])]) if not recent_events.empty else 0
+            else:
+                recent_count = recent_blocks = 0
+            
+            # Top-level KPI metrics
+            st.markdown("### 🎯 Key Performance Indicators")
+            kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
+            
+            with kpi_col1:
+                st.metric(
+                    label="🔍 Total Events",
+                    value=f"{total_events:,}",
+                    delta=f"+{recent_count} (24h)",
+                    help="Total security events processed by the system"
+                )
+            
+            with kpi_col2:
+                threat_percentage = (len(block_actions) / total_events * 100) if total_events > 0 else 0
+                st.metric(
+                    label="🚨 Threats Blocked",
+                    value=f"{len(block_actions):,}",
+                    delta=f"{threat_percentage:.1f}% of total",
+                    delta_color="inverse",
+                    help="Number of high-risk threats blocked"
+                )
+            
+            with kpi_col3:
+                st.metric(
+                    label="⚠️ Rate Limited",
+                    value=f"{len(rate_limit_actions):,}",
+                    delta=f"+{len(recent_events[recent_events['action_type'] == 'RATE_LIMIT']) if not recent_events.empty else 0} (24h)",
+                    help="Medium-risk sources with applied rate limiting"
+                )
+            
+            with kpi_col4:
+                st.metric(
+                    label="📊 Avg Risk Score",
+                    value=f"{avg_risk:.3f}",
+                    delta=f"Max: {max_risk:.3f}",
+                    help="Average risk score across all events"
+                )
+            
+            with kpi_col5:
+                unique_sources = mitigation_df['source_ip'].nunique() if 'source_ip' in mitigation_df.columns else 0
+                st.metric(
+                    label="🌐 Unique Sources",
+                    value=f"{unique_sources:,}",
+                    delta=f"{high_risk_events} high-risk",
+                    delta_color="inverse",
+                    help="Total unique IP addresses monitored"
+                )
+            
+            st.markdown("---")
+            
+            # Security Status Overview
+            st.markdown("### 🛡️ Security Status Overview")
+            status_col1, status_col2 = st.columns([1, 1])
+            
+            with status_col1:
+                # Security health gauge
+                allowed_percentage = (len(allow_actions) / total_events * 100) if total_events > 0 else 0
+                
+                if allowed_percentage >= 80:
+                    status_color = "🟢"
+                    status_text = "SECURE"
+                    status_desc = "Network traffic is primarily legitimate"
+                elif allowed_percentage >= 60:
+                    status_color = "🟡"
+                    status_text = "MODERATE"
+                    status_desc = "Elevated security activity detected"
+                else:
+                    status_color = "🔴"
+                    status_text = "HIGH ALERT"
+                    status_desc = "Significant threat activity detected"
+                
+                st.markdown(f"""
+                <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 10px; border-left: 5px solid {'#28a745' if allowed_percentage >= 80 else '#ffc107' if allowed_percentage >= 60 else '#dc3545'};">
+                    <h2 style="margin: 0; color: #333;">{status_color} {status_text}</h2>
+                    <p style="margin: 10px 0 0 0; color: #666;">{status_desc}</p>
+                    <h3 style="margin: 10px 0 0 0; color: #333;">{allowed_percentage:.1f}% Traffic Allowed</h3>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with status_col2:
+                # Recent activity summary
+                st.markdown("#### 📈 24-Hour Activity Summary")
+                if recent_count > 0:
+                    recent_summary = recent_events['action_type'].value_counts() if not recent_events.empty else pd.Series()
+                    for action, count in recent_summary.items():
+                        if action == 'ALLOW':
+                            st.success(f"✅ **{action}**: {count} events")
+                        elif action == 'RATE_LIMIT':
+                            st.warning(f"⚠️ **{action}**: {count} events")
+                        elif action in ['BLOCK', 'SHORT_TIMEOUT_BLOCK']:
+                            st.error(f"🚫 **{action}**: {count} events")
+                        else:
+                            st.info(f"ℹ️ **{action}**: {count} events")
+                else:
+                    st.info("No recent activity in the last 24 hours")
+            
+            st.markdown("---")
+            
+            # Charts section
+            st.markdown("### 📈 Analytics & Visualizations")
+            
+            chart_col1, chart_col2 = st.columns(2)
+            
+            with chart_col1:
+                # Risk distribution chart
+                risk_chart = create_risk_distribution_chart(mitigation_df)
+                if risk_chart:
+                    st.plotly_chart(risk_chart, use_container_width=True)
+                else:
+                    # Fallback chart using Streamlit's built-in charting
+                    if 'action_type' in mitigation_df.columns:
+                        action_counts = mitigation_df['action_type'].value_counts()
+                        st.bar_chart(action_counts)
+                    else:
+                        st.info("Risk distribution data not available")
+            
+            with chart_col2:
+                # Risk score histogram
+                risk_hist_chart = create_risk_score_histogram(mitigation_df)
+                if risk_hist_chart:
+                    st.plotly_chart(risk_hist_chart, use_container_width=True)
+                else:
+                    # Fallback histogram
+                    if 'risk_score' in mitigation_df.columns:
+                        risk_scores = pd.to_numeric(mitigation_df['risk_score'], errors='coerce').dropna()
+                        if len(risk_scores) > 0:
+                            st.bar_chart(pd.cut(risk_scores, bins=10).value_counts().sort_index())
+                    else:
+                        st.info("Risk score data not available")
+            
+            # Timeline chart (full width)
+            st.markdown("#### 🕒 Security Events Timeline")
+            timeline_chart = create_risk_timeline_chart(mitigation_df)
+            if timeline_chart:
+                st.plotly_chart(timeline_chart, use_container_width=True)
+            else:
+                st.info("Timeline data not available - enable plotly for interactive charts")
+            
+            # Top sources chart
+            st.markdown("#### 🎯 Top Threat Sources")
+            sources_chart = create_top_sources_chart(mitigation_df)
+            if sources_chart:
+                st.plotly_chart(sources_chart, use_container_width=True)
+            else:
+                # Fallback top sources table
+                if 'source_ip' in mitigation_df.columns:
+                    top_sources = mitigation_df['source_ip'].value_counts().head(10)
+                    st.dataframe(top_sources.to_frame('Event Count'), use_container_width=True)
+                else:
+                    st.info("Source IP data not available")
+            
+        else:
+            # No data available
+            st.warning("⚠️ No mitigation data available")
+            st.info("""
+            **Getting Started:**
+            1. Ensure the SDN controller is running
+            2. Generate some network traffic for analysis
+            3. Check that log files are being created in the controller directory
+            4. Refresh this dashboard to see updated data
+            """)
+            
+            # Show expected file paths
+            st.markdown("#### 📁 Expected Data Sources:")
+            st.code(f"""
+            Anomaly Log: {ANOMALY_LOG}
+            Mitigation Log: {MITIGATION_LOG}
+            Legacy Log: {LEGACY_LOG}
+            """)
+            
+            # Show file status
+            for filepath, label in [(ANOMALY_LOG, "Anomaly Log"), (MITIGATION_LOG, "Mitigation Log"), (LEGACY_LOG, "Legacy Log")]:
+                if os.path.exists(filepath):
+                    file_size = os.path.getsize(filepath)
+                    st.success(f"✅ **{label}**: Found ({file_size} bytes)")
+                else:
+                    st.error(f"❌ **{label}**: Not found")
 
-    elif tab == "Active Mitigations":
-        st.header("🛡️ Active Mitigations")
+    elif tab == "🛡️ Active Mitigations":
+        st.header("🛡️ Active Security Mitigations")
+        st.markdown("---")
         if not mitigation_df.empty:
             latest_actions = mitigation_df.drop_duplicates('source_ip', keep='last')
             active = latest_actions[latest_actions['action_type'].isin(['RATE_LIMIT', 'SHORT_TIMEOUT_BLOCK', 'BLOCK'])]
             if not active.empty:
-                st.dataframe(active[['source_ip', 'action_type', 'risk_score', 'risk_level', 'details']].tail(15), use_container_width=True)
+                st.markdown(f"### 🚨 {len(active)} Active Mitigations")
+                
+                # Add filtering options
+                filter_col1, filter_col2 = st.columns(2)
+                with filter_col1:
+                    action_filter = st.multiselect(
+                        "Filter by Action Type",
+                        options=active['action_type'].unique(),
+                        default=active['action_type'].unique(),
+                        help="Select action types to display"
+                    )
+                with filter_col2:
+                    if 'risk_score' in active.columns:
+                        risk_threshold = st.slider(
+                            "Minimum Risk Score",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.0,
+                            step=0.1,
+                            help="Show only sources above this risk threshold"
+                        )
+                        filtered_active = active[
+                            (active['action_type'].isin(action_filter)) & 
+                            (pd.to_numeric(active['risk_score'], errors='coerce') >= risk_threshold)
+                        ]
+                    else:
+                        filtered_active = active[active['action_type'].isin(action_filter)]
+                
+                if not filtered_active.empty:
+                    # Enhanced display with color coding
+                    display_df = filtered_active[['source_ip', 'action_type', 'risk_score', 'risk_level', 'details']].tail(15)
+                    st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        column_config={
+                            "source_ip": st.column_config.TextColumn("Source IP", help="IP address under mitigation"),
+                            "action_type": st.column_config.TextColumn("Action", help="Type of mitigation applied"),
+                            "risk_score": st.column_config.NumberColumn("Risk Score", format="%.3f", help="Calculated risk score"),
+                            "risk_level": st.column_config.TextColumn("Risk Level", help="Risk category"),
+                            "details": st.column_config.TextColumn("Details", help="Additional information")
+                        }
+                    )
+                else:
+                    st.info("No mitigations match the current filters")
             else:
-                st.success("No active mitigations - all sources are allowed")
+                st.success("✅ No active mitigations - all sources are currently allowed")
+        else:
+            st.info("No mitigation data available")
 
-    elif tab == "IP Lists & Config":
+    elif tab == "⚙️ System Configuration":
         st.header("🔧 IP Lists & Configuration")
         
         whitelist, blacklist, honeypot_ips = load_ip_lists()
@@ -329,8 +831,9 @@ def main():
             else:
                 st.info("No IPs currently monitored")
 
-    elif tab == "Threat Analysis":
-        st.header("📊 Enhanced Threat Analysis")
+    elif tab == "🎯 Threat Intelligence":
+        st.header("🎯 Enhanced Threat Intelligence")
+        st.markdown("---")
         if not mitigation_df.empty:
             # Build source risk stats
             mitigation_df['risk_score'] = mitigation_df['risk_score'].astype(float)
@@ -344,33 +847,98 @@ def main():
                 total_events=('risk_score', 'count')
             ).reset_index()
             top_sources = grouped.sort_values(['honeypot_hits', 'max_risk', 'high_risk_events'], ascending=False).head(10)
-            st.dataframe(top_sources, use_container_width=True)
+            
+            st.markdown("### 🎯 Top Threat Sources")
+            st.dataframe(
+                top_sources,
+                use_container_width=True,
+                column_config={
+                    "source_ip": st.column_config.TextColumn("Source IP"),
+                    "max_risk": st.column_config.NumberColumn("Max Risk", format="%.3f"),
+                    "avg_risk": st.column_config.NumberColumn("Avg Risk", format="%.3f"),
+                    "high_risk_events": st.column_config.NumberColumn("High Risk Events"),
+                    "blocks": st.column_config.NumberColumn("Blocks"),
+                    "honeypot_hits": st.column_config.NumberColumn("Honeypot Hits"),
+                    "total_events": st.column_config.NumberColumn("Total Events")
+                }
+            )
+        else:
+            st.info("No threat intelligence data available")
 
-    elif tab == "Recent Activities":
-        st.header("📋 Recent Security Activities")
+    elif tab == "� Analytics & Reports":
+        st.header("📈 Security Analytics & Reports")
+        st.markdown("---")
         if not mitigation_df.empty:
             recent = mitigation_df.tail(20)
-            st.dataframe(recent[['timestamp', 'action_type', 'source_ip', 'risk_score', 'risk_level', 'details']], use_container_width=True)
+            st.markdown("### 📋 Recent Security Activities")
+            st.dataframe(
+                recent[['timestamp', 'action_type', 'source_ip', 'risk_score', 'risk_level', 'details']],
+                use_container_width=True,
+                column_config={
+                    "timestamp": st.column_config.DatetimeColumn("Timestamp"),
+                    "action_type": st.column_config.TextColumn("Action"),
+                    "source_ip": st.column_config.TextColumn("Source IP"),
+                    "risk_score": st.column_config.NumberColumn("Risk Score", format="%.3f"),
+                    "risk_level": st.column_config.TextColumn("Risk Level"),
+                    "details": st.column_config.TextColumn("Details")
+                }
+            )
+        else:
+            st.info("No analytics data available")
 
-    elif tab == "Source Analysis":
-        st.header("🔍 Detailed Source Analysis")
+    elif tab == "🔍 Source Investigation":
+        st.header("🔍 Detailed Source Investigation")
+        st.markdown("---")
         if not mitigation_df.empty:
             source_ips = mitigation_df['source_ip'].dropna().unique().tolist()
-            selected_ip = st.selectbox("Select Source IP", source_ips)
-            source_actions = mitigation_df[mitigation_df['source_ip'] == selected_ip]
-            if not source_actions.empty:
-                st.write(f"Total Events: {len(source_actions)}")
-                st.write(f"First Seen: {source_actions.iloc[0]['timestamp'][:19]}")
-                st.write(f"Last Seen: {source_actions.iloc[-1]['timestamp'][:19]}")
-                st.write(f"Risk Score Range: {source_actions['risk_score'].astype(float).min():.3f} - {source_actions['risk_score'].astype(float).max():.3f}")
-                st.write(f"Average Risk Score: {source_actions['risk_score'].astype(float).mean():.3f}")
-                action_counts = source_actions['action_type'].value_counts()
-                st.write("Action Breakdown:")
-                st.dataframe(action_counts)
-                st.write("Recent Activity (Last 10 events):")
-                st.dataframe(source_actions[['timestamp', 'action_type', 'risk_score', 'risk_level', 'details']].tail(10), use_container_width=True)
+            selected_ip = st.selectbox("🎯 Select Source IP for Investigation", source_ips)
+            
+            if selected_ip:
+                source_actions = mitigation_df[mitigation_df['source_ip'] == selected_ip]
+                if not source_actions.empty:
+                    # Investigation summary
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Events", len(source_actions))
+                    with col2:
+                        st.metric("First Seen", source_actions.iloc[0]['timestamp'][:19])
+                    with col3:
+                        st.metric("Last Seen", source_actions.iloc[-1]['timestamp'][:19])
+                    with col4:
+                        risk_scores = pd.to_numeric(source_actions['risk_score'], errors='coerce')
+                        st.metric("Avg Risk", f"{risk_scores.mean():.3f}")
+                    
+                    st.markdown("---")
+                    
+                    # Action breakdown
+                    st.markdown("### 📊 Action Breakdown")
+                    action_counts = source_actions['action_type'].value_counts()
+                    st.dataframe(action_counts.to_frame('Count'), use_container_width=True)
+                    
+                    # Recent activity
+                    st.markdown("### 🕒 Recent Activity (Last 10 events)")
+                    st.dataframe(
+                        source_actions[['timestamp', 'action_type', 'risk_score', 'risk_level', 'details']].tail(10),
+                        use_container_width=True
+                    )
+        else:
+            st.info("No source data available for investigation")
 
-    st.info("💡 TIP: Click 'Refresh Data' to update dashboard. Run with: streamlit run analytics_dashboard.py")
+    # Professional footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; padding: 20px; background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 10px; margin-top: 2rem;">
+        <p style="margin: 0; color: #666; font-size: 0.9rem;">
+            🛡️ <strong>SDN Security Operations Center</strong> | 
+            🔄 Auto-refresh: {auto_refresh}s | 
+            📊 Powered by ML-driven threat detection | 
+            🚀 Built with Streamlit
+        </p>
+        <p style="margin: 5px 0 0 0; color: #999; font-size: 0.8rem;">
+            💡 <strong>Pro Tip:</strong> Use the refresh button or wait for auto-refresh to see the latest security data
+        </p>
+    </div>
+    """.format(auto_refresh=AUTO_REFRESH_MS//1000), unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
