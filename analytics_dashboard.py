@@ -1,4 +1,3 @@
-
 # --- Streamlit Dynamic Dashboard Version ---
 import streamlit as st
 import pandas as pd
@@ -7,6 +6,20 @@ import os
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="SDN Mitigation Analytics Dashboard", layout="wide")
+
+# Auto-refresh: prefer `streamlit-autorefresh` if available, otherwise fall back to a small JS reload.
+# Set AUTO_REFRESH_MS to desired interval in milliseconds (e.g. 3000 = 3 seconds).
+AUTO_REFRESH_MS = 3000
+try:
+    from streamlit_autorefresh import st_autorefresh
+    # This will cause Streamlit to rerun the script every AUTO_REFRESH_MS milliseconds.
+    _autorefresh_count = st_autorefresh(interval=AUTO_REFRESH_MS, limit=None, key="auto_refresh")
+    st.sidebar.info(f"Auto-refresh enabled: {AUTO_REFRESH_MS//1000}s")
+except Exception:
+    # Fallback: inject small JS to reload the page periodically.
+    from streamlit.components.v1 import html as _st_html
+    _st_html(f"<script>setInterval(()=>{{window.location.reload();}}, {AUTO_REFRESH_MS});</script>", height=0)
+    st.sidebar.info(f"Auto-refresh (JS fallback) enabled: {AUTO_REFRESH_MS//1000}s")
 
 CONTROLLER_DIR = "/home/sandeep/Capstone_Phase3/controller"
 ANOMALY_LOG = os.path.join(CONTROLLER_DIR, "anomaly_log.json")

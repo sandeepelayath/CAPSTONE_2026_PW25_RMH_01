@@ -428,14 +428,17 @@ class RiskBasedMitigationManager:
                 pass  # Ignore if meter doesn't exist
             
             # Create meter modification message with proper flags
+            bands = [
+                        parser.OFPMeterBandDrop(rate=100, burst_size=10)  # rate in packets/s
+                    ]
             meter_mod = parser.OFPMeterMod(
-                datapath=datapath,
-                command=ofproto.OFPMC_ADD,
-                flags=ofproto.OFPMF_PKTPS | ofproto.OFPMF_KBPS,
-                meter_id=meter_id,
-                bands=bands
-            )
-            
+                        datapath=datapath,
+                        command=ofproto.OFPMC_ADD,
+                        flags=ofproto.OFPMF_PKTPS,
+                        meter_id=meter_id,
+                        bands=bands
+                    )
+
             datapath.send_msg(meter_mod)
             self.logger.debug(f"📏 Installed meter {meter_id} on switch {datapath.id}: "
                              f"{min_pps} pps, {min_bps} kbps")
@@ -456,7 +459,7 @@ class RiskBasedMitigationManager:
             # Determine if source_identifier is IP or MAC and create appropriate match
             if self._is_ipv4_address(source_identifier):
                 # IPv4 address - match by source IP
-                match = parser.OFPMatch(ipv4_src=source_identifier)
+                match = parser.OFPMatch(eth_type=0x0800, ipv4_src=source_identifier)
                 self.logger.debug(f"📐 Creating IPv4 rate limit rule for {source_identifier}")
             elif self._is_mac_address(source_identifier):
                 # MAC address - match by source MAC
@@ -499,7 +502,7 @@ class RiskBasedMitigationManager:
             
             # Determine if source_identifier is IP or MAC and create appropriate match
             if self._is_ipv4_address(source_identifier):
-                match = parser.OFPMatch(ipv4_src=source_identifier)
+                match = parser.OFPMatch(eth_type=0x0800, ipv4_src=source_identifier)
                 self.logger.debug(f"📐 Creating basic IPv4 rate limit rule for {source_identifier}")
             elif self._is_mac_address(source_identifier):
                 match = parser.OFPMatch(eth_src=source_identifier)
@@ -545,7 +548,7 @@ class RiskBasedMitigationManager:
                 
                 # Create appropriate match based on identifier type
                 if self._is_ipv4_address(source_ip):
-                    match = parser.OFPMatch(ipv4_src=source_ip)
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_src=source_ip)
                 elif self._is_mac_address(source_ip):
                     match = parser.OFPMatch(eth_src=source_ip)
                 else:
@@ -725,7 +728,7 @@ class RiskBasedMitigationManager:
             
             # Determine if source_identifier is IP or MAC and create appropriate match
             if self._is_ipv4_address(source_identifier):
-                match = parser.OFPMatch(ipv4_src=source_identifier)
+                match = parser.OFPMatch(eth_type=0x0800, ipv4_src=source_identifier)
             elif self._is_mac_address(source_identifier):
                 match = parser.OFPMatch(eth_src=source_identifier)
             else:
@@ -794,7 +797,7 @@ class RiskBasedMitigationManager:
             if hasattr(flow_stats, 'match'):
                 match_dict = flow_stats.match.to_jsondict().get('OFPMatch', {})
                 dest_ip = match_dict.get('ipv4_dst')
-            self.logger.error(f"[DEBUG][H2-HIGH-RISK] h2 (10.0.0.2) assigned HIGH/CRITICAL risk: risk_score={risk_score:.3f}, ml_confidence={ml_confidence:.3f}, dest_ip={dest_ip}, flow_stats={getattr(flow_stats, 'match', None)}")
+            #self.logger.error(f"[DEBUG][H2-HIGH-RISK] h2 (10.0.0.2) assigned HIGH/CRITICAL risk: risk_score={risk_score:.3f}, ml_confidence={ml_confidence:.3f}, dest_ip={dest_ip}, flow_stats={getattr(flow_stats, 'match', None)}")
 
         # Update risk history
         profile['risk_history'].append({
@@ -1015,7 +1018,7 @@ class RiskBasedMitigationManager:
                 
                 # Create appropriate match based on identifier type
                 if self._is_ipv4_address(source_ip):
-                    match = parser.OFPMatch(ipv4_src=source_ip)
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_src=source_ip)
                     self.logger.info(f"🚫 Installing IPv4 blocking flow for {source_ip} on switch {datapath.id}")
                 elif self._is_mac_address(source_ip):
                     match = parser.OFPMatch(eth_src=source_ip)
@@ -1260,7 +1263,7 @@ class RiskBasedMitigationManager:
                 
                 # Create appropriate match based on identifier type
                 if self._is_ipv4_address(source_ip):
-                    match = parser.OFPMatch(ipv4_src=source_ip)
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_src=source_ip)
                 elif self._is_mac_address(source_ip):
                     match = parser.OFPMatch(eth_src=source_ip)
                 else:
