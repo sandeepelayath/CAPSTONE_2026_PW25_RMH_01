@@ -78,7 +78,11 @@ ryu-manager ryu_controller.py
 cd Capstone_Phase3/mininet/
 sudo python3 test_topology.py
 ```
-
+### Terminal 3 (Start Analytics Dshboard):
+```bash
+cd Capstone_Phase3/
+./run_dashboard.sh #OPen dashboard in http://127.0.0.1:8501/
+```
 ## Cleanup
 After execution, clean up Mininet:
 ```bash
