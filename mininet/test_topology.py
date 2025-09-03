@@ -625,6 +625,156 @@ def display_test_results():
 
 
 
+def flush_all_ports_and_flows(net):
+    """Comprehensive port and flow flushing to fix connectivity issues"""
+    info("\n" + "="*60)
+    info("🧹 FLUSHING ALL PORTS AND FLOWS")
+    info("="*60)
+    
+    # Step 1: Stop all OpenFlow controllers temporarily
+    info("🛑 Temporarily stopping OpenFlow processing...\n")
+    for switch in net.switches:
+        switch.cmd('ovs-vsctl set-fail-mode', switch.name, 'standalone')
+    
+    time.sleep(2)
+    
+    # Step 2: Delete all flows from all switches
+    info("🗑️ Deleting all flows from switches...\n")
+    for switch in net.switches:
+        info(f"  🧹 Flushing flows on {switch.name}")
+        switch.cmd('ovs-ofctl del-flows', switch.name)
+        switch.cmd('ovs-ofctl del-meters', switch.name)  # Also clear meters
+        
+        # Show current flow count
+        result = switch.cmd('ovs-ofctl dump-flows', switch.name, '| wc -l')
+        info(f"    📊 Remaining flows: {result.strip()}")
+    
+    # Step 3: Clear ARP tables on all hosts
+    info("\n🗂️ Clearing ARP tables on all hosts...\n")
+    for host in net.hosts:
+        info(f"  🧹 Clearing ARP on {host.name}")
+        host.cmd('ip neigh flush all')
+        host.cmd('arp -d -a')  # Fallback for older systems
+    
+    # Step 4: Restart interfaces to clear any stuck states
+    info("\n🔄 Restarting network interfaces...\n")
+    for host in net.hosts:
+        intf_name = f"{host.name}-eth0"
+        info(f"  🔄 Restarting {intf_name}")
+        host.cmd(f'ifconfig {intf_name} down')
+        time.sleep(0.5)
+        host.cmd(f'ifconfig {intf_name} up')
+    
+    # Step 5: Flush bridge tables
+    info("\n🌉 Flushing bridge MAC tables...\n")
+    for switch in net.switches:
+        info(f"  🧹 Flushing MAC table on {switch.name}")
+        switch.cmd('ovs-appctl fdb/flush', switch.name)
+    
+    # Step 6: Re-enable OpenFlow with clean state
+    info("\n🔄 Re-enabling OpenFlow control...\n")
+    for switch in net.switches:
+        switch.cmd('ovs-vsctl set-fail-mode', switch.name, 'secure')
+        switch.cmd('ovs-vsctl set-controller', switch.name, 'tcp:127.0.0.1:6653')
+    
+    # Step 7: Install basic connectivity flows before controller takes over
+    info("\n📡 Installing basic connectivity flows...\n")
+    for switch in net.switches:
+        # Allow ARP traffic
+        switch.cmd('ovs-ofctl add-flow', switch.name, 'arp,priority=1000,actions=flood')
+        # Allow DHCP if needed
+        switch.cmd('ovs-ofctl add-flow', switch.name, 'udp,tp_dst=67,priority=1000,actions=flood')
+        switch.cmd('ovs-ofctl add-flow', switch.name, 'udp,tp_dst=68,priority=1000,actions=flood')
+    
+    time.sleep(3)
+    
+    info("✅ Port and flow flushing completed!\n")
+    
+    # Step 8: Test basic connectivity
+    info("🔍 Testing basic connectivity after flush...\n")
+    test_basic_connectivity(net)
+
+def test_basic_connectivity(net):
+    """Test basic connectivity after flushing"""
+    info("📡 Performing connectivity tests...\n")
+    
+    # Get first two hosts for testing
+    h1, h2 = net.hosts[0], net.hosts[1]
+    
+    # Test 1: Ping between directly connected hosts
+    info(f"  🏓 Testing ping: {h1.name} -> {h2.name}")
+    result = h1.cmd(f'ping -c 3 -W 2 {h2.IP()}')
+    if "3 received" in result:
+        info("    ✅ Ping successful")
+    else:
+        info("    ❌ Ping failed")
+        info(f"    📝 Result: {result}")
+    
+    # Test 2: ARP resolution
+    info(f"  🗂️ Testing ARP resolution")
+    h1.cmd(f'ping -c 1 {h2.IP()} > /dev/null 2>&1')  # Generate ARP
+    arp_result = h1.cmd('arp -a')
+    if h2.IP() in arp_result:
+        info("    ✅ ARP resolution working")
+    else:
+        info("    ❌ ARP resolution failed")
+        info(f"    📝 ARP table: {arp_result}")
+    
+    # Test 3: Check switch flow tables
+    info(f"  📊 Checking flow tables...")
+    for switch in net.switches:
+        flows = switch.cmd('ovs-ofctl dump-flows', switch.name)
+        flow_count = len([l for l in flows.split('\n') if 'actions=' in l])
+        info(f"    📋 {switch.name}: {flow_count} flows")
+
+def emergency_connectivity_fix(net):
+    """Emergency fix for connectivity issues"""
+    info("\n" + "="*60)
+    info("🚨 EMERGENCY CONNECTIVITY FIX")
+    info("="*60)
+    
+    # Nuclear option: Reset everything to learning switch mode
+    for switch in net.switches:
+        info(f"🔄 Resetting {switch.name} to learning switch mode")
+        
+        # Delete everything
+        switch.cmd('ovs-ofctl del-flows', switch.name)
+        switch.cmd('ovs-ofctl del-meters', switch.name)
+        
+        # Install simple learning switch flow
+        switch.cmd('ovs-ofctl add-flow', switch.name, 'priority=0,actions=flood')
+        
+        # Allow all ARP
+        switch.cmd('ovs-ofctl add-flow', switch.name, 'arp,priority=1000,actions=flood')
+        
+        # Set to standalone mode temporarily
+        switch.cmd('ovs-vsctl set-fail-mode', switch.name, 'standalone')
+    
+    time.sleep(2)
+    
+    # Clear everything and restart
+    for host in net.hosts:
+        host.cmd('ip neigh flush all')
+    
+    info("🔄 Reconnecting to controller...")
+    for switch in net.switches:
+        switch.cmd('ovs-vsctl set-fail-mode', switch.name, 'secure')
+    
+    time.sleep(3)
+    info("✅ Emergency fix completed - try pinging now!")
+
+def add_cli_helpers():
+    """Add helper commands to CLI environment"""
+    return {
+        'flush_ports': flush_all_ports_and_flows,
+        'fix_connectivity': emergency_connectivity_fix,
+        'test_ping': test_basic_connectivity,
+        'clear_flows': lambda net: [s.cmd('ovs-ofctl del-flows', s.name) for s in net.switches],
+        'show_flows': lambda net: [print(f"\n{s.name}:\n{s.cmd('ovs-ofctl dump-flows', s.name)}") for s in net.switches],
+        'show_ports': lambda net: [print(f"\n{s.name}:\n{s.cmd('ovs-ofctl show', s.name)}") for s in net.switches],
+        'flush_arp': lambda net: [h.cmd('ip neigh flush all') for h in net.hosts]
+    }
+
 def start_network():
     topo = EnhancedTestTopology()
     net = Mininet(
@@ -639,22 +789,46 @@ def start_network():
     info("\n[INFO] Waiting for switches to connect to the Ryu controller...\n")
     time.sleep(5)
     
+    # Configure OpenFlow 1.3
     for switch in net.switches:
         info(f"[INFO] Configuring {switch.name} for OpenFlow 1.3\n")
         switch.cmd('ovs-vsctl set bridge', switch.name, 'protocols=OpenFlow13')
 
-    for switch in net.switches:
-        info(f"[INFO] Clearing flows on {switch.name}\n")
-        switch.cmd('ovs-ofctl del-flows', switch.name)
+    # Initial flow cleanup
+    flush_all_ports_and_flows(net)
 
     start_packet_capture(net)
-    info("\n[INFO] Testing network connectivity...\n")
+    
+    # Test connectivity before starting tests
+    info("\n[INFO] Testing initial network connectivity...\n")
     net.pingAll()
 
     reset_controller_state()
+    
+    # Add helper functions to CLI
+    helpers = add_cli_helpers()
+    
+    info("\n[INFO] 🛠️ AVAILABLE CLI COMMANDS:")
+    info("  flush_ports(net)     - Complete port and flow flush")
+    info("  fix_connectivity(net) - Emergency connectivity fix")
+    info("  test_ping(net)       - Test basic connectivity")
+    info("  clear_flows(net)     - Clear all OpenFlow rules")
+    info("  show_flows(net)      - Display all flows")
+    info("  show_ports(net)      - Show port status")
+    info("  flush_arp(net)       - Clear ARP tables")
+    info("  net.pingAll()        - Test connectivity between all hosts")
+    
+    # Run comprehensive tests
     test_risk_based_mitigations(net)
 
     info("\n[INFO] Network is now ready for manual testing. Entering CLI...\n")
+    info("💡 If pings don't work, try: flush_ports(net) or fix_connectivity(net)\n")
+    
+    # Make helpers available in CLI
+    import __main__
+    for name, func in helpers.items():
+        setattr(__main__, name, func)
+    
     CLI(net)
     net.stop()
 

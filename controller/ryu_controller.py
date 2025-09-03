@@ -69,8 +69,8 @@ class AnomalyDetectionController(app_manager.RyuApp):
         self.mitigation_manager = RiskBasedMitigationManager(
             controller_ref=self,
             low_risk_threshold=0.08,
-            medium_risk_threshold=0.25,
-            high_risk_threshold=0.35,
+            medium_risk_threshold=0.18,
+            high_risk_threshold=0.25,
             base_rate_limit_pps=1000,
             base_rate_limit_bps=1000000,
             base_blacklist_timeout=60,
@@ -186,13 +186,13 @@ class AnomalyDetectionController(app_manager.RyuApp):
             source_ip = self._extract_source_ip(stat)
             dest_ip = self._extract_dest_ip(stat)
             
-            # Log flow details for debugging
-            #self.logger.debug(f"[DEBUG] Processing flow: source_ip={source_ip}, dest_ip={dest_ip}, "
-                            #f"packet_count={stat.packet_count}, duration_sec={stat.duration_sec}")
+            # Log flow details for debugging with separator line
+            self.logger.debug(f"\n[DEBUG] Processing flow: source_ip={source_ip}, dest_ip={dest_ip}, "
+                            f"packet_count={stat.packet_count}, duration_sec={stat.duration_sec}")
 
             # --- Step 1: Whitelist Check ---
             if source_ip and source_ip in self.whitelist:
-                #self.logger.debug(f"✅ Whitelisted source {source_ip}: traffic allowed (dest: {dest_ip}, packets: {stat.packet_count}), skipping all mitigation.")
+                self.logger.debug(f"✅ Whitelisted source {source_ip}: traffic allowed (dest: {dest_ip}, packets: {stat.packet_count}), skipping all mitigation.")
                 continue
 
             # --- Step 2: Blacklist Check ---

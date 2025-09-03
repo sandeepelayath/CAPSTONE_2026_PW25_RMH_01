@@ -423,8 +423,10 @@ def main():
                 avg_risk = risk_scores.mean() if len(risk_scores) > 0 else 0
                 max_risk = risk_scores.max() if len(risk_scores) > 0 else 0
                 high_risk_events = (risk_scores >= 0.7).sum() if len(risk_scores) > 0 else 0
+                # Calculate low risk flows (using thresholds from mitigation manager: < 0.08)
+                low_risk_events = (risk_scores < 0.08).sum() if len(risk_scores) > 0 else 0
             else:
-                avg_risk = max_risk = high_risk_events = 0
+                avg_risk = max_risk = high_risk_events = low_risk_events = 0
             
             # Recent activity (last 24 hours)
             if 'timestamp' in mitigation_df.columns:
@@ -433,12 +435,14 @@ def main():
                 recent_events = mitigation_df[mitigation_df['datetime'] > recent_cutoff] if 'datetime' in mitigation_df.columns else pd.DataFrame()
                 recent_count = len(recent_events)
                 recent_blocks = len(recent_events[recent_events['action_type'].isin(['SHORT_TIMEOUT_BLOCK', 'BLOCK'])]) if not recent_events.empty else 0
+                # Calculate recent low risk allowed flows
+                recent_allowed = len(recent_events[recent_events['action_type'] == 'ALLOW']) if not recent_events.empty else 0
             else:
-                recent_count = recent_blocks = 0
+                recent_count = recent_blocks = recent_allowed = 0
             
-            # Top-level KPI metrics
+            # Top-level KPI metrics (expanded to 6 columns)
             st.markdown("### 🎯 Key Performance Indicators")
-            kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
+            kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5, kpi_col6 = st.columns(6)
             
             with kpi_col1:
                 st.metric(
@@ -484,53 +488,15 @@ def main():
                     help="Total unique IP addresses monitored"
                 )
             
-            st.markdown("---")
-            
-            # Security Status Overview
-            st.markdown("### 🛡️ Security Status Overview")
-            status_col1, status_col2 = st.columns([1, 1])
-            
-            with status_col1:
-                # Security health gauge
+            with kpi_col6:
                 allowed_percentage = (len(allow_actions) / total_events * 100) if total_events > 0 else 0
-                
-                if allowed_percentage >= 80:
-                    status_color = "🟢"
-                    status_text = "SECURE"
-                    status_desc = "Network traffic is primarily legitimate"
-                elif allowed_percentage >= 60:
-                    status_color = "🟡"
-                    status_text = "MODERATE"
-                    status_desc = "Elevated security activity detected"
-                else:
-                    status_color = "🔴"
-                    status_text = "HIGH ALERT"
-                    status_desc = "Significant threat activity detected"
-                
-                st.markdown(f"""
-                <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 10px; border-left: 5px solid {'#28a745' if allowed_percentage >= 80 else '#ffc107' if allowed_percentage >= 60 else '#dc3545'};">
-                    <h2 style="margin: 0; color: #333;">{status_color} {status_text}</h2>
-                    <p style="margin: 10px 0 0 0; color: #666;">{status_desc}</p>
-                    <h3 style="margin: 10px 0 0 0; color: #333;">{allowed_percentage:.1f}% Traffic Allowed</h3>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with status_col2:
-                # Recent activity summary
-                st.markdown("#### 📈 24-Hour Activity Summary")
-                if recent_count > 0:
-                    recent_summary = recent_events['action_type'].value_counts() if not recent_events.empty else pd.Series()
-                    for action, count in recent_summary.items():
-                        if action == 'ALLOW':
-                            st.success(f"✅ **{action}**: {count} events")
-                        elif action == 'RATE_LIMIT':
-                            st.warning(f"⚠️ **{action}**: {count} events")
-                        elif action in ['BLOCK', 'SHORT_TIMEOUT_BLOCK']:
-                            st.error(f"🚫 **{action}**: {count} events")
-                        else:
-                            st.info(f"ℹ️ **{action}**: {count} events")
-                else:
-                    st.info("No recent activity in the last 24 hours")
+                st.metric(
+                    label="✅ Low Risk Allowed",
+                    value=f"{len(allow_actions):,}",
+                    delta=f"{allowed_percentage:.1f}% of total",
+                    delta_color="normal",
+                    help="Low-risk flows that were allowed through the system"
+                )
             
             st.markdown("---")
             

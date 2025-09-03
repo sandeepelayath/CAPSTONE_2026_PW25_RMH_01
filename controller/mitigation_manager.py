@@ -19,7 +19,7 @@ import logging
 class RiskBasedMitigationManager:
     def __init__(self, controller_ref, 
                  # Risk scoring parameters - TUNED FOR ACTUAL TRAFFIC PATTERNS
-                 low_risk_threshold=0.08, medium_risk_threshold=0.25, high_risk_threshold=0.35,
+                 low_risk_threshold=0.08, medium_risk_threshold=0.18, high_risk_threshold=0.25,
                  # Rate limiting parameters
                  base_rate_limit_pps=1000, base_rate_limit_bps=1000000,
                  # Blacklist parameters
@@ -98,11 +98,23 @@ class RiskBasedMitigationManager:
         self.logger = logging.getLogger('RiskBasedMitigationManager')
         self.logger.setLevel(logging.INFO)
         
+        # Prevent duplicate handlers if already configured
+        if self.logger.handlers:
+            return
+        
+        # Create console handler for terminal output
+        console_handler = logging.StreamHandler()
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(console_formatter)
+        console_handler.setLevel(logging.INFO)
+        self.logger.addHandler(console_handler)
+        
         # Create file handler for mitigation logs
-        handler = logging.FileHandler('risk_mitigation_log.json')
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        file_handler = logging.FileHandler('risk_mitigation_log.json')
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(file_formatter)
+        file_handler.setLevel(logging.INFO)
+        self.logger.addHandler(file_handler)
 
     def risk_based_mitigation(self, flow_stats, ml_confidence, source_ip=None, dest_ip=None, flow_id=None):
         """
@@ -252,17 +264,24 @@ class RiskBasedMitigationManager:
         """
         current_time = datetime.now()
         
+        # DEBUG: Add explicit console prints
+        print(f"🔥 [DEBUG] _apply_graduated_mitigation called for {source_ip}: risk_score={risk_score:.3f}")
+        print(f"🔥 [DEBUG] Thresholds: low={self.low_risk_threshold}, medium={self.medium_risk_threshold}, high={self.high_risk_threshold}")
+        
         self.logger.info(f"🎯 Applying mitigation for {source_ip}: risk_score={risk_score:.3f}, "
                         f"low_threshold={self.low_risk_threshold}, medium_threshold={self.medium_risk_threshold}, high_threshold={self.high_risk_threshold}")
         
         if risk_score < self.low_risk_threshold:
             # LOW RISK: Allow with potential whitelisting
+            print(f"🔥 [DEBUG] Choosing LOW RISK path for {source_ip}")
             action = self._handle_low_risk(source_ip, risk_score, flow_stats)
         elif risk_score < self.medium_risk_threshold:
             # MEDIUM RISK: Apply rate limiting
+            print(f"🔥 [DEBUG] Choosing MEDIUM RISK path for {source_ip}")
             action = self._handle_medium_risk(source_ip, risk_score, flow_stats)
         elif risk_score < self.high_risk_threshold:
             # HIGH RISK: Redirect to honeypot
+            print(f"🔥 [DEBUG] Choosing HIGH RISK path for {source_ip}")
             action = {
                 'action': 'REDIRECT_TO_HONEYPOT',
                 'risk_level': 'HIGH',
@@ -271,6 +290,7 @@ class RiskBasedMitigationManager:
             }
         else:
             # CRITICAL: Block and blacklist
+            print(f"🔥 [DEBUG] Choosing CRITICAL RISK path for {source_ip}")
             action = self._handle_high_risk(source_ip, risk_score, flow_stats)
         return action
 
@@ -293,6 +313,9 @@ class RiskBasedMitigationManager:
 
     def _handle_medium_risk(self, source_ip, risk_score, flow_stats):
         """Handle medium-risk flows: Apply adaptive rate limiting"""
+        # DEBUG: Add explicit console print to ensure this method is called
+        print(f"🔥 [DEBUG] _handle_medium_risk called for {source_ip} with risk_score={risk_score:.3f}")
+        
         # Calculate rate limit based on risk score granularity
         rate_multiplier = self._calculate_rate_limit_multiplier(risk_score)
         pps_limit = int(self.base_rate_limit_pps * rate_multiplier)
