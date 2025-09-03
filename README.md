@@ -1,4 +1,4 @@
-# CAPSTONE 2026: Secure Traffic Anomaly Detection in Software Defined NEtworks using Neural NEtworks
+# CAPSTONE 2026: Neural Network- Based Anomaly Detection and Adaptive QoS Mitigation with Honeypot Defense in SDN
 
 ## Overview
 This project implements a machine learning approach for detecting anomalies in encrypted network traffic within a Software-Defined Networking (SDN) environment. The system utilizes Mininet for network simulation, Ryu as an SDN controller, and a trained ML model for anomaly detection.
