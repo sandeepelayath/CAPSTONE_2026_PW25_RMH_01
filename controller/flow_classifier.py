@@ -28,9 +28,9 @@ class RandomizedNeuralNetwork(tf.keras.layers.Layer):
 
 class FlowClassifier:
     def __init__(self, 
-                 model_path='../lstm_finetuned_ml_model/lstm_model_combined.keras', 
-                 scaler_path='../lstm_finetuned_ml_model/scaler.pkl', 
-                 features_path='../lstm_finetuned_ml_model/feature_names.pkl'):
+                 model_path='../lstm_rann_hybrid_finetuned_ml_model/lstm_model_combined.keras', 
+                 scaler_path='../lstm_rann_hybrid_finetuned_ml_model/scaler.pkl', 
+                 features_path='../lstm_rann_hybrid_finetuned_ml_model/feature_names.pkl'):
         try:
             # Register custom objects manually
             custom_objects = {"RandomizedNeuralNetwork": RandomizedNeuralNetwork}
@@ -178,3 +178,4 @@ class FlowClassifier:
             m['recall'] = m['TP'] / (m['TP'] + m['FN']) if m['TP'] + m['FN'] > 0 else 0
             m['f1_score'] = 2 * m['precision'] * m['recall'] / (m['precision'] + m['recall']) if m['precision'] + m['recall'] > 0 else 0
         return m
+
