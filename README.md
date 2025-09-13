@@ -54,6 +54,11 @@ cd ml_model
 python train_model.py
 ```
 
+## Trained models after Finetuning
+1. Sequential LSTM Model is stored in:  Capstone_Phase3/lstm_finetuned_ml_model/
+2. LSTM+RaNN Hybrid model stored in: Capstone_Phase3/lstm_rann_hybrid_finetuned_ml_model/
+Load the preferred model in FlowClassifier (Capstone_Phase3/controller/flow_classier.py)
+
 ## Running the SDN Controller
 ```bash
 cd controller
