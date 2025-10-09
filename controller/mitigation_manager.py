@@ -35,10 +35,9 @@ Dependencies:
 - Python threading for concurrent monitoring and management
 - JSON logging for security audit trails and incident response
 
-Author: Network Security Team  
-Version: 2.0 (Production-Ready)
-License: Enterprise Security License
-Date: 2025
+Author: Capstone Project Team  
+Version: 2.0 
+Date: 2025 Oct 9
 """
 
 import time
@@ -217,19 +216,21 @@ class RiskBasedMitigationManager:
 
     def risk_based_mitigation(self, flow_stats, ml_confidence, source_ip=None, dest_ip=None, flow_id=None):
         """
-        Primary entry point for intelligent risk-based network security mitigation.
+        Primary entry point for ML-based network security risk assessment and mitigation.
         
-        Implements a comprehensive security decision engine that combines machine learning
-        threat detection with contextual risk assessment and honeypot tripwire detection.
-        The system applies graduated mitigation responses based on calculated risk levels
-        while maintaining network performance and minimizing false positives.
+        Implements intelligent risk assessment combining machine learning threat detection 
+        with contextual behavioral analysis. This method focuses purely on ML-based risk 
+        assessment after initial security policy checks have been performed elsewhere.
+        Applies graduated mitigation responses based on calculated risk levels.
         
         Mitigation Decision Flow:
-        1. Honeypot Tripwire Check: Immediate maximum penalty for honeypot access attempts
-        2. Source Identification: Extract network identifiers (IP/MAC) from flow statistics
-        3. Risk Assessment: Calculate comprehensive risk score from ML confidence and context
-        4. Mitigation Application: Apply graduated response based on risk level
-        5. Audit Logging: Record all security actions for compliance and analysis
+        1. Source Identification: Extract network identifiers (IP/MAC) from flow statistics
+        2. Risk Assessment: Calculate comprehensive risk score from ML confidence and context
+        3. Mitigation Application: Apply graduated response based on risk level
+        4. Audit Logging: Record all security actions for compliance and analysis
+        
+        Note: Security policy checks (whitelist, blacklist, honeypot) should be performed
+        via evaluate_flow_security() before calling this method to avoid redundancy.
         
         Risk-Based Response Tiers:
         - Low Risk: Allow traffic, consider for trusted whitelist inclusion
@@ -249,30 +250,7 @@ class RiskBasedMitigationManager:
                  None if mitigation fails or no action required
         """
         try:
-            # Priority 1: Honeypot Tripwire Detection (Maximum Security Response)
-            # Honeypot access attempts indicate malicious reconnaissance and trigger immediate maximum penalties
-            if dest_ip and dest_ip in self.honeypot_ips:
-                # Extract source identifier for immediate blocking response
-                if not source_ip:
-                    source_ip = self._extract_source_ip(flow_stats)
-
-                # Apply immediate maximum security response for honeypot access attempts
-                if source_ip:
-                    self.logger.warning(f"🚨 HONEYPOT ACCESS DETECTED: {source_ip} → {dest_ip} - IMMEDIATE MAX PENALTY")
-                    self.honeypot_hits[source_ip] += 1
-                    
-                    # Assign maximum risk score and apply immediate blocking (bypasses normal risk assessment)
-                    risk_score = 1.0  # Maximum risk for honeypot hits
-                    self._update_risk_profile(source_ip, risk_score, ml_confidence, flow_stats, is_honeypot_hit=True)
-                    mitigation_action = self._handle_high_risk(source_ip, risk_score, flow_stats, is_honeypot_hit=True)
-                    self._log_risk_action(source_ip, risk_score, mitigation_action, flow_stats)
-                    return mitigation_action
-                else:
-                    # Log honeypot access without valid source for forensic analysis
-                    self.logger.error(f"🚨 HONEYPOT ACCESS detected but source IP extraction failed - Flow: {flow_stats.match}")
-
-            # Priority 2: Standard Risk-Based Mitigation for Anomalous Traffic
-            # Apply intelligent risk assessment and graduated mitigation responses
+            # Extract source IP for ML-based risk assessment
             if not source_ip:
                 source_ip = self._extract_source_ip(flow_stats)
 
@@ -1874,6 +1852,50 @@ class RiskBasedMitigationManager:
         
         return analysis
 
+    def _handle_honeypot_hit(self, source_ip, dest_ip, flow_stats):
+        """
+        Handle honeypot access attempts with immediate maximum security response.
+        
+        Centralized honeypot hit processing that applies maximum security penalties
+        for sources attempting to access honeypot IP addresses. This indicates
+        malicious reconnaissance and triggers immediate blocking with maximum timeout.
+        
+        Args:
+            source_ip (str): Source IP attempting honeypot access
+            dest_ip (str): Honeypot IP being accessed
+            flow_stats: Flow statistics for incident documentation
+            
+        Returns:
+            dict: Honeypot hit response with immediate blocking action
+        """
+        # Increment honeypot hit counter for threat intelligence
+        self.honeypot_hits[source_ip] = self.honeypot_hits.get(source_ip, 0) + 1
+        
+        self.logger.warning(f"🍯 HONEYPOT HIT DETECTED: {source_ip} → {dest_ip} "
+                           f"(total hits: {self.honeypot_hits[source_ip]}) - APPLYING MAX PENALTY")
+        
+        # Apply immediate maximum security response (bypasses normal risk assessment)
+        risk_score = 1.0  # Maximum risk for honeypot hits
+        
+        # Update risk profile with honeypot hit flag
+        self._update_risk_profile(source_ip, risk_score, 1.0, flow_stats, is_honeypot_hit=True)
+        
+        # Apply maximum penalty blocking
+        mitigation_action = self._handle_high_risk(source_ip, risk_score, flow_stats, is_honeypot_hit=True)
+        
+        # Log the security action
+        self._log_risk_action(source_ip, risk_score, mitigation_action, flow_stats)
+        
+        # Return structured response for evaluate_flow_security
+        return {
+            'action': 'HONEYPOT_HIT',
+            'priority': 'CRITICAL',
+            'immediate_block': True,
+            'reason': f'Honeypot access attempt to {dest_ip}',
+            'honeypot_hits': self.honeypot_hits[source_ip],
+            'mitigation_applied': mitigation_action
+        }
+
     def _calculate_risk_trend(self, source_ip):
         """Calculate risk trend for a source"""
         if source_ip not in self.risk_profiles:
@@ -2564,6 +2586,103 @@ class RiskBasedMitigationManager:
                 'monitoring_thread_active': self.monitoring_active
             }
         }
+
+    def evaluate_flow_security(self, source_ip, dest_ip, flow_stats):
+        """
+        Evaluate flow security status using consolidated security policies.
+        
+        Centralized security evaluation method that consolidates whitelist, blacklist,
+        and honeypot checks for improved modularity. This method handles all initial
+        security policy checks, eliminating the need for duplicate checks in 
+        risk_based_mitigation() method. Called by the SDN controller during flow 
+        statistics analysis to determine immediate security response actions.
+        
+        Optimization: This method performs all security policy checks once, avoiding
+        redundant honeypot/whitelist/blacklist checks in other methods.
+        
+        Args:
+            source_ip (str): Source IP address to evaluate
+            dest_ip (str): Destination IP address to check for honeypot
+            flow_stats: OpenFlow statistics for the flow
+            
+        Returns:
+            dict: Security evaluation results with action recommendations:
+                - ALLOW: Whitelisted sources (trusted)
+                - BLOCK: Blacklisted sources (known threats)  
+                - HONEYPOT_HIT: Critical honeypot access (immediate block)
+                - ANALYZE: Requires ML-based risk analysis
+                - ERROR: Evaluation failed (fallback to ML analysis)
+        """
+        try:
+            current_time = datetime.now()
+            
+            # Check whitelist status first (trusted sources bypass all other checks)
+            if source_ip in self.whitelist:
+                whitelist_entry = self.whitelist[source_ip]
+                
+                # Verify whitelist entry hasn't expired
+                if current_time < whitelist_entry['expiry']:
+                    # Update last activity and trust score
+                    whitelist_entry['last_activity'] = current_time
+                    current_trust = self._calculate_whitelist_trust(whitelist_entry)
+                    
+                    if current_trust > 0.5:  # Still trusted
+                        return {
+                            'action': 'ALLOW',
+                            'priority': 'LOW',
+                            'reason': f'Whitelisted source (trust: {current_trust:.2f})',
+                            'whitelisted': True,
+                            'trust_score': current_trust
+                        }
+                    else:
+                        # Trust has decayed, remove from whitelist
+                        del self.whitelist[source_ip]
+                        self.logger.info(f"⚪ Removed {source_ip} from whitelist due to trust decay")
+                else:
+                    # Expired whitelist entry
+                    del self.whitelist[source_ip]
+                    self.logger.info(f"⚪ Removed expired whitelist entry for {source_ip}")
+            
+            # Check blacklist status (blocked sources)
+            if source_ip in self.blacklist:
+                blacklist_entry = self.blacklist[source_ip]
+                
+                # Verify blacklist entry hasn't expired
+                if current_time < blacklist_entry['expiry']:
+                    return {
+                        'action': 'BLOCK',
+                        'priority': 'HIGH',
+                        'reason': f'Blacklisted source (offense #{blacklist_entry["offense_count"]})',
+                        'blacklisted': True,
+                        'offense_count': blacklist_entry['offense_count']
+                    }
+                else:
+                    # Expired blacklist entry
+                    del self.blacklist[source_ip]
+                    self.logger.info(f"⚫ Removed expired blacklist entry for {source_ip}")
+            
+            # Check honeypot hit (critical security event - highest priority)
+            if dest_ip in self.honeypot_ips:
+                # Handle honeypot hit with immediate maximum security response
+                honeypot_response = self._handle_honeypot_hit(source_ip, dest_ip, flow_stats)
+                return honeypot_response
+            
+            # Default response for unclassified sources
+            return {
+                'action': 'ANALYZE',
+                'priority': 'MEDIUM',
+                'reason': 'Source requires ML-based risk analysis',
+                'requires_ml_analysis': True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error evaluating flow security for {source_ip}: {e}")
+            return {
+                'action': 'ERROR',
+                'priority': 'MEDIUM',
+                'reason': f'Security evaluation failed: {e}',
+                'requires_ml_analysis': True  # Fallback to ML analysis
+            }
 
     def get_current_lists(self):
         """
