@@ -370,10 +370,7 @@ class AnomalyDetectionController(app_manager.RyuApp):
             security_result = self.mitigation_manager.evaluate_flow_security(
                 source_ip=source_ip,
                 dest_ip=dest_ip,
-                flow_stats=stat,
-                controller_blacklist=self.blacklist,
-                controller_whitelist=self.whitelist,
-                should_analyze_attacks=self._should_analyze_flow_for_attacks(source_ip, dest_ip)
+                flow_stats=stat
             )
             
             # Handle security evaluation results
@@ -408,7 +405,11 @@ class AnomalyDetectionController(app_manager.RyuApp):
                 
             # === ML-BASED THREAT DETECTION ===
             # Only proceed to ML analysis if security evaluation allows it
-            else:
+            elif security_result['action'] in ['ANALYZE', 'ERROR']:
+                # Check if we should analyze this flow for attacks
+                if not self._should_analyze_flow_for_attacks(source_ip, dest_ip):
+                    continue  # Skip server response traffic
+                    
                 self.logger.debug(f"[ML ANALYSIS] Analyzing flow: packets={stat.packet_count}")
                 is_anomaly, confidence = self.flow_classifier.classify_flow(stat)
                 self.logger.debug(f"[ML RESULT] Anomaly={is_anomaly}, Confidence={confidence:.4f}")
@@ -459,6 +460,10 @@ class AnomalyDetectionController(app_manager.RyuApp):
                             self.logger.info(f"🚫 EMERGENCY BLOCK: Removed high-confidence threat flow")
                         except Exception as e:
                             self.logger.error(f"Failed to remove threat flow: {e}")
+            
+            else:
+                # Handle unexpected security actions
+                self.logger.warning(f"⚠️ UNEXPECTED SECURITY ACTION: {security_result['action']} for {source_ip} -> {dest_ip}")
 
     @set_ev_cls(ofp_event.EventOFPStateChange, MAIN_DISPATCHER)
     def _state_change_handler(self, ev):
