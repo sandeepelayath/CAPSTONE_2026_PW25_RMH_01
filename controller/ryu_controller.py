@@ -1,7 +1,7 @@
 """
 Intelligent SDN Controller with ML-based Network Anomaly Detection
 
-This module implements a production-ready Software-Defined Networking (SDN) controller
+This module implements a Software-Defined Networking (SDN) controller
 that integrates machine learning-based anomaly detection with advanced risk mitigation
 strategies. The controller provides real-time network security monitoring using hybrid
 RaNN+LSTM models and implements sophisticated threat response mechanisms.
@@ -21,9 +21,9 @@ Architecture:
 - Intelligent flow direction analysis for accurate threat assessment
 - Scalable mitigation management with persistent state tracking
 
-Author: Network Security Team
-Version: 1.0 (Production)
-Date: 2025
+Author: Capstone Project Team
+Version: 1.0 
+Date: 2025 Oct 9
 """
 
 import ssl
@@ -31,25 +31,19 @@ import time
 import sys
 import os
 
-# SSL Context Fix for Production Deployment Stability
-# Addresses SSL recursion issues that can occur in containerized environments
+###### Below code is just to fix an environment issue seen with SSL
 if not hasattr(ssl.SSLContext, "_fixed_minimum_version"):
     original_minimum_version = getattr(ssl.SSLContext, 'minimum_version', None)
-    
     def safe_get_minimum_version(self):
-        """Safe getter for SSL minimum version to prevent recursion"""
         return getattr(self, '_min_version', ssl.TLSVersion.TLSv1_2)
-    
     def safe_set_minimum_version(self, value):
-        """Safe setter for SSL minimum version with validation"""
         if not isinstance(value, ssl.TLSVersion):
             return
         self._min_version = value
-    
     ssl.SSLContext.minimum_version = property(safe_get_minimum_version, safe_set_minimum_version)
     ssl.SSLContext._fixed_minimum_version = True
 
-# Module Path Configuration for Flexible Deployment
+# Module Path Configuration for Deployment
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ryu.base import app_manager
@@ -68,44 +62,11 @@ import threading
 import time
 from datetime import datetime
 from mitigation_manager import RiskBasedMitigationManager
-
-# ML-based Flow Classification Module with Graceful Fallback
-try:
-    from flow_classifier import FlowClassifier
-    print("✅ Successfully imported FlowClassifier from flow_classifier module")
-except ImportError as e:
-    print(f"⚠️ FlowClassifier import failed: {e}. Using fallback classifier.")
-    
-    class FlowClassifier:
-        """
-        Fallback Flow Classifier for Deployment Resilience
-        
-        Provides basic anomaly detection capabilities when the main ML classifier
-        is unavailable. Uses simple heuristics based on packet rates to maintain
-        basic security monitoring functionality during classifier failures.
-        """
-        
-        def classify_flow(self, flow_stats):
-            """
-            Simple rate-based anomaly detection fallback.
-            
-            Args:
-                flow_stats: OpenFlow statistics object
-                
-            Returns:
-                tuple: (is_anomaly: bool, confidence: float)
-            """
-            packet_count = getattr(flow_stats, 'packet_count', 0)
-            duration_sec = getattr(flow_stats, 'duration_sec', 1)
-            
-            packets_per_second = packet_count / max(duration_sec, 1)
-            if packets_per_second > 200:  # Conservative high-rate threshold
-                return True, 0.6
-            return False, 0.1
+from flow_classifier import FlowClassifier
 
 class AnomalyDetectionController(app_manager.RyuApp):
     """
-    Production SDN Controller with Intelligent Network Security Monitoring
+    SDN Controller with Intelligent Network Security Monitoring
     
     This controller implements a comprehensive network security solution that combines
     Software-Defined Networking with machine learning-based threat detection. It provides
@@ -166,11 +127,13 @@ class AnomalyDetectionController(app_manager.RyuApp):
         self.monitor_thread = hub.spawn(self._monitor)
         
         # Security Policy Configuration
-        # Production whitelist - currently empty for testing purposes
+        # Whitelist - currently empty for testing purposes
+        # Admin can use the interface to add trusted IPs to whitelist
         self.whitelist = set([
             # '10.0.0.1',  # Example: Normal user host
             # '10.0.0.2',  # Example: Web server host
         ])
+
         self.blacklist = set()  # Dynamic blacklist for malicious sources
         
         # Infrastructure Server Classification
@@ -186,7 +149,7 @@ class AnomalyDetectionController(app_manager.RyuApp):
         Handle new switch connections and perform initial switch configuration.
         
         This method is triggered when a new OpenFlow switch connects to the controller.
-        It performs essential initialization including fragment handling configuration,
+        It performs essential initialization, configuration,
         table-miss flow installation, and switch registration for monitoring.
         
         Security Initialization:
@@ -256,23 +219,26 @@ class AnomalyDetectionController(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         """
-        Handle incoming packets from OpenFlow switches for learning and forwarding.
+        Handle packets that come to the controller from switches.
         
-        This method implements intelligent packet processing that combines learning
-        switch functionality with network topology discovery for security analysis.
-        It processes ARP packets for IP address resolution and establishes forwarding
-        rules while maintaining the network state needed for accurate threat detection.
+        This function acts like a learning switch - it remembers which devices
+        are connected to which ports, and forwards packets accordingly.
         
-        Packet Processing Pipeline:
-        1. Extract packet and switch information
-        2. Filter out LLDP (topology discovery) traffic
-        3. Learn MAC-to-IP mappings from ARP packets for security analysis
-        4. Perform MAC address learning for switch forwarding
-        5. Install forwarding flows or flood unknown destinations
-        6. Send packet out through appropriate port
+        What it does:
+        1. Get packet information (source, destination, port)
+        2. Skip network management packets (LLDP)
+        3. Learn IP addresses from ARP packets
+        4. Remember which MAC addresses are on which ports
+        5. Forward packet to the right port (or flood if unknown)
+        
+        How it helps Anomaly detetcion project:
+        - Creates network flows that our ML model analyzes for threats
+        - Builds MAC-to-IP mapping needed to identify attack sources
+        - Establishes the network topology for security monitoring
+        - Generates the flow statistics that feed our anomaly detection
         
         Args:
-            ev: EventOFPPacketIn containing the incoming packet and metadata
+            ev: The packet event from the switch
         """
         msg = ev.msg
         datapath = msg.datapath
@@ -297,7 +263,7 @@ class AnomalyDetectionController(app_manager.RyuApp):
                 self.mac_to_ip[arp_pkt.src_mac] = arp_pkt.src_ip
                 self.logger.debug(f"ARP Cache: Learned {arp_pkt.src_mac} -> {arp_pkt.src_ip}")
 
-        # Learning Switch Implementation with Security-aware Flow Installation
+        # Learning Switch Implementation
         dst = eth.dst
         src = eth.src
         dpid = datapath.id
@@ -351,22 +317,26 @@ class AnomalyDetectionController(app_manager.RyuApp):
         """
         Request flow statistics from a specific OpenFlow switch.
         
-        Sends an OpenFlow flow statistics request to gather current traffic
-        information for security analysis. The statistics include packet counts,
-        byte counts, flow duration, and match criteria essential for ML-based
-        anomaly detection.
+        OpenFlow Message Exchange:
+        - Sends: OFPFlowStatsRequest message to the switch
+        - Receives: OFPFlowStatsReply message with flow statistics
+        - Handler: _flow_stats_reply_handler processes the reply
+        
+        The statistics include packet counts, byte counts, flow duration, 
+        and match criteria essential for ML-based anomaly detection.
         
         Args:
             datapath: Target OpenFlow switch connection for statistics collection
         """
         parser = datapath.ofproto_parser
-        req = parser.OFPFlowStatsRequest(datapath)
-        datapath.send_msg(req)
+        req = parser.OFPFlowStatsRequest(datapath)  # Create flow stats request message
+        datapath.send_msg(req)                      # Send to switch -> triggers OFPFlowStatsReply
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
         """
-        Core security analysis engine for processing OpenFlow statistics.
+        Core security analysis engine for processing OpenFlow statistics. 
+        Handles OFPFlowStatsReply message from switches
         
         This method implements the primary security analysis pipeline that processes
         flow statistics from OpenFlow switches to detect and respond to network threats.
@@ -395,65 +365,49 @@ class AnomalyDetectionController(app_manager.RyuApp):
             self.logger.debug(f"\n[FLOW ANALYSIS] Processing: src={source_ip}, dst={dest_ip}, "
                             f"packets={stat.packet_count}, duration={stat.duration_sec}s")
 
-            # === SECURITY TIER 1: WHITELIST VALIDATION ===
-            if source_ip and source_ip in self.whitelist:
-                self.logger.debug(f"✅ WHITELIST: {source_ip} -> {dest_ip} (packets: {stat.packet_count}) - ALLOWED")
+            # === COMPREHENSIVE SECURITY EVALUATION ===
+            # Delegate Whitelist, Blacklist, Honeypot security checks to mitigation manager 
+            security_result = self.mitigation_manager.evaluate_flow_security(
+                source_ip=source_ip,
+                dest_ip=dest_ip,
+                flow_stats=stat,
+                controller_blacklist=self.blacklist,
+                controller_whitelist=self.whitelist,
+                should_analyze_attacks=self._should_analyze_flow_for_attacks(source_ip, dest_ip)
+            )
+            
+            # Handle security evaluation results
+            if security_result['action'] == 'ALLOW':
+                self.logger.debug(f"✅ {security_result['reason']}: {source_ip} -> {dest_ip} - ALLOWED")
                 continue
-
-            # === SECURITY TIER 2: BLACKLIST ENFORCEMENT ===
-            elif source_ip and source_ip in self.blacklist:
-                self.logger.warning(f"🚫 BLACKLIST: {source_ip} - BLOCKED IMMEDIATELY")
+                
+            elif security_result['action'] == 'BLOCK':
+                self.logger.warning(f"🚫 {security_result['reason']}: {source_ip} - BLOCKED")
+                if security_result.get('add_to_blacklist'):
+                    self.blacklist.add(source_ip)
+                    
+                # Apply OpenFlow enforcement
                 try:
                     datapath = ev.msg.datapath
                     self.remove_flow(datapath, stat.match)
-                except Exception as e:
-                    self.logger.error(f"Failed to remove blacklisted flow: {e}")
-                continue
-
-            # === SECURITY TIER 3: HONEYPOT TRIPWIRE SYSTEM ===
-            elif dest_ip and dest_ip in self.mitigation_manager.honeypot_ips:
-                if source_ip:
-                    self.logger.warning(f"🚨 HONEYPOT TRIPWIRE: {source_ip} -> {dest_ip} - CRITICAL THREAT")
-                    self.blacklist.add(source_ip)
                     
-                    # Apply maximum security response for honeypot interaction
-                    mitigation_action = self.mitigation_manager.risk_based_mitigation(
-                        flow_stats=stat,
-                        ml_confidence=1.0,  # Maximum confidence for honeypot hits
-                        source_ip=source_ip,
-                        dest_ip=dest_ip,
-                        force_block=True
-                    )
-                    
-                    if mitigation_action:
-                        self.logger.info(f"🛡️ HONEYPOT PROTECTION: Applied {mitigation_action['action']} for {source_ip}")
-                    
-                    # Remove existing flow and install high-priority drop rule
-                    try:
-                        datapath = ev.msg.datapath
-                        self.remove_flow(datapath, stat.match)
-                        
-                        # Install maximum priority drop rule for ongoing protection
+                    # Install drop rule if specified
+                    if security_result.get('install_drop_rule'):
                         parser = datapath.ofproto_parser
                         ofproto = datapath.ofproto
                         drop_match = parser.OFPMatch(ipv4_src=source_ip, ipv4_dst=dest_ip, eth_type=0x0800)
-                        drop_actions = []  # Empty actions list = DROP
-                        self.add_flow(datapath, 32767, drop_match, drop_actions)  # Maximum priority
+                        drop_actions = []
+                        self.add_flow(datapath, 32767, drop_match, drop_actions)
                         
-                        self.logger.info(f"🚫 HONEYPOT SHIELD: Installed drop rule {source_ip} -> {dest_ip}")
-                    except Exception as e:
-                        self.logger.error(f"Failed to install honeypot protection: {e}")
-                    continue
-                else:
-                    self.logger.error(f"🚨 HONEYPOT HIT: Unable to extract source IP from flow {stat.match}")
-                    continue
-
-            # === SECURITY TIER 4: INTELLIGENT FLOW ANALYSIS ===
-            # Apply smart flow direction analysis to focus on potential attack vectors
-            if not self._should_analyze_flow_for_attacks(source_ip, dest_ip):
-                continue  # Skip server response traffic analysis
+                except Exception as e:
+                    self.logger.error(f"Failed to enforce blocking: {e}")
+                continue
                 
-            # === SECURITY TIER 5: ML-BASED THREAT DETECTION ===
+            elif security_result['action'] == 'SKIP':
+                continue  # Skip analysis (e.g., server response traffic)
+                
+            # === ML-BASED THREAT DETECTION ===
+            # Only proceed to ML analysis if security evaluation allows it
             else:
                 self.logger.debug(f"[ML ANALYSIS] Analyzing flow: packets={stat.packet_count}")
                 is_anomaly, confidence = self.flow_classifier.classify_flow(stat)
@@ -511,10 +465,6 @@ class AnomalyDetectionController(app_manager.RyuApp):
         """
         Handle OpenFlow switch connection state changes.
         
-        Manages the dynamic network topology by tracking switch connections
-        and disconnections. Maintains accurate switch registry for security
-        monitoring and ensures proper cleanup when switches disconnect.
-        
         Args:
             ev: EventOFPStateChange containing switch state information
         """
@@ -528,10 +478,6 @@ class AnomalyDetectionController(app_manager.RyuApp):
     def _error_msg_handler(self, ev):
         """
         Handle OpenFlow protocol error messages from switches.
-        
-        Provides comprehensive error logging for debugging and monitoring
-        OpenFlow communication issues. Critical for maintaining reliable
-        controller-switch communication in production deployments.
         
         Args:
             ev: EventOFPErrorMsg containing error details from switch
@@ -599,15 +545,9 @@ class AnomalyDetectionController(app_manager.RyuApp):
         """
         Extract source IP address from OpenFlow statistics with intelligent fallback.
         
-        This method implements a multi-tier approach to extract source IP addresses
-        from OpenFlow flow statistics, essential for accurate threat attribution and
-        security policy enforcement. It uses MAC-to-IP resolution as a fallback for
-        Layer 2 flows that lack explicit IP matching.
-        
         Extraction Strategy:
         1. Primary: Direct IPv4 source extraction from flow match
-        2. Fallback: Alternative match representation handling
-        3. Resolution: MAC-to-IP cache lookup for Layer 2 flows
+        2. Fallback: MAC-to-IP cache lookup for Layer 2 flows
         
         Args:
             flow_stat: OpenFlow flow statistics object
