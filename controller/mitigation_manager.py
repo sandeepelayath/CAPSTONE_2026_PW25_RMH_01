@@ -165,6 +165,9 @@ class RiskBasedMitigationManager:
         self.blocked_sources = {}                 # Legacy blocking interface compatibility
         self.legitimate_behavior = defaultdict(list)  # Historical legitimate behavior patterns
         
+        # Track recently unblocked sources to prevent immediate re-blocking
+        self.recently_unblocked = {}              # {source_ip: unblock_timestamp}
+        
         # Initialize comprehensive logging system for security audit trails
         self.setup_logging()
         
@@ -1187,6 +1190,48 @@ class RiskBasedMitigationManager:
         }
         self._write_log_entry(log_entry)
 
+    def _log_security_action(self, action_type, source_ip, dest_ip, reason, flow_stats, security_result):
+        """
+        Log security evaluation actions (ALLOW/BLOCK) to JSON file for comprehensive audit trail.
+        
+        This method logs actions taken during initial security evaluation phase (whitelist, 
+        blacklist, honeypot checks) to maintain complete audit records of all security
+        decisions, not just ML-based mitigations.
+        
+        Args:
+            action_type (str): Type of security action (ALLOW, BLOCK, etc.)
+            source_ip (str): Source IP address of the flow
+            dest_ip (str): Destination IP address of the flow  
+            reason (str): Human-readable reason for the security action
+            flow_stats: OpenFlow statistics for the flow
+            security_result (dict): Complete security evaluation result
+        """
+        try:
+            log_entry = {
+                'action_type': action_type,
+                'source_ip': source_ip,
+                'dest_ip': dest_ip,
+                'timestamp': datetime.now().isoformat(),
+                'reason': reason,
+                'details': security_result.get('reason', 'Security policy evaluation'),
+                'packet_count': getattr(flow_stats, 'packet_count', 0),
+                'byte_count': getattr(flow_stats, 'byte_count', 0),
+                'security_source': 'policy_evaluation'  # Distinguish from ML-based actions
+            }
+            
+            # Add additional context if available
+            if 'whitelisted' in security_result:
+                log_entry['whitelisted'] = security_result['whitelisted']
+                log_entry['trust_score'] = security_result.get('trust_score', 0)
+            if 'blacklisted' in security_result:
+                log_entry['blacklisted'] = security_result['blacklisted']
+                log_entry['offense_count'] = security_result.get('offense_count', 0)
+            
+            self._write_log_entry(log_entry)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error logging security action: {e}")
+
     def _extract_source_ip(self, flow_stats):
         """Extract source IP from flow statistics"""
         try:
@@ -1499,6 +1544,14 @@ class RiskBasedMitigationManager:
         for ip in expired_whitelist:
             del self.whitelist[ip]
             self.logger.info(f"⚪ Removed expired whitelist entry: {ip}")
+        
+        # Clean up old recently_unblocked entries (older than 5 minutes)
+        current_timestamp = time.time()
+        expired_unblocked = [ip for ip, timestamp in self.recently_unblocked.items() 
+                           if current_timestamp - timestamp > 300]  # 5 minutes
+        for ip in expired_unblocked:
+            del self.recently_unblocked[ip]
+            self.logger.debug(f"🧹 Removed old recently_unblocked entry: {ip}")
 
     def _update_whitelist_trust_scores(self):
         """Update trust scores for whitelist entries"""
@@ -1596,6 +1649,9 @@ class RiskBasedMitigationManager:
             
             # Remove from blocked sources
             del self.blocked_sources[source_ip]
+            
+            # Track unblock time to prevent immediate re-blocking
+            self.recently_unblocked[source_ip] = time.time()
             
             self.logger.info(f"✅ UNBLOCKED SOURCE: {source_ip} - Reason: {reason}")
             

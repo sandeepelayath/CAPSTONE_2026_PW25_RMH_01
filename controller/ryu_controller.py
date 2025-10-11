@@ -114,9 +114,9 @@ class AnomalyDetectionController(app_manager.RyuApp):
         # Advanced Risk Management and Mitigation System
         self.mitigation_manager = RiskBasedMitigationManager(
             controller_ref=self,
-            low_risk_threshold=0.08,      # Conservative threshold for low-risk traffic
-            medium_risk_threshold=0.18,   # Moderate threshold triggering rate limiting
-            high_risk_threshold=0.25,     # High threshold for blocking actions
+            low_risk_threshold=0.15,      # Adjusted threshold to allow ML confidence ~0.12-0.13 as low-risk
+            medium_risk_threshold=0.20,   # Moderate threshold triggering rate limiting
+            high_risk_threshold=0.28,     # High threshold for blocking actions
             base_rate_limit_pps=1000,     # Base packet rate limit (packets/second)
             base_rate_limit_bps=1000000,  # Base bandwidth limit (bytes/second)
             base_blacklist_timeout=60,    # Initial blacklist timeout (seconds)
@@ -142,6 +142,10 @@ class AnomalyDetectionController(app_manager.RyuApp):
             '10.0.0.1',  # h1 - Normal user host (can also run services)
             '10.0.0.2',  # h2 - Web server host
         }
+        
+        # Flow Processing Optimization
+        # Track recently processed sources to avoid redundant security actions
+        self.recently_processed = {}  # {source_ip: last_action_time}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -308,10 +312,36 @@ class AnomalyDetectionController(app_manager.RyuApp):
         3. Wait for configured interval before next monitoring cycle
         4. Repeat continuously for real-time security coverage
         """
+        cleanup_counter = 0
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
+            
+            # Periodic cleanup of recently_processed tracker (every 30 seconds)
+            cleanup_counter += 1
+            if cleanup_counter >= 15:  # Every 15 * 2s = 30s
+                self._cleanup_recently_processed()
+                cleanup_counter = 0
+                
             hub.sleep(2)  # Optimized 2-second interval for responsive threat detection
+
+    def _cleanup_recently_processed(self):
+        """
+        Clean up expired entries from recently_processed tracker to prevent memory leaks.
+        
+        Removes entries older than 30 seconds to maintain memory efficiency while
+        preventing redundant processing of the same sources.
+        """
+        current_time = time.time()
+        expired_sources = [
+            source_ip for source_ip, last_time in self.recently_processed.items()
+            if current_time - last_time > 30
+        ]
+        for source_ip in expired_sources:
+            del self.recently_processed[source_ip]
+        
+        if expired_sources:
+            self.logger.debug(f"🧹 Cleaned up {len(expired_sources)} expired processing entries")
 
     def _request_stats(self, datapath):
         """
@@ -364,6 +394,19 @@ class AnomalyDetectionController(app_manager.RyuApp):
             
             self.logger.debug(f"\n[FLOW ANALYSIS] Processing: src={source_ip}, dst={dest_ip}, "
                             f"packets={stat.packet_count}, duration={stat.duration_sec}s")
+            
+            # Skip processing flows with no source IP (cannot be mitigated)
+            if not source_ip:
+                self.logger.debug(f"⚠️ SKIP: No source IP identified for flow")
+                continue
+            
+            # Optimization: Skip recently processed sources to avoid redundant actions
+            current_time = time.time()
+            if source_ip in self.recently_processed:
+                last_processed = self.recently_processed[source_ip]
+                if current_time - last_processed < 5:  # Skip if processed within last 5 seconds
+                    self.logger.debug(f"⚠️ SKIP: {source_ip} recently processed ({current_time - last_processed:.1f}s ago)")
+                    continue
 
             # === COMPREHENSIVE SECURITY EVALUATION ===
             # Delegate Whitelist, Blacklist, Honeypot security checks to mitigation manager 
@@ -376,10 +419,37 @@ class AnomalyDetectionController(app_manager.RyuApp):
             # Handle security evaluation results
             if security_result['action'] == 'ALLOW':
                 self.logger.debug(f"✅ {security_result['reason']}: {source_ip} -> {dest_ip} - ALLOWED")
+                
+                # Update processing tracker (less frequent for ALLOW actions)
+                self.recently_processed[source_ip] = current_time
+                
+                # Log ALLOW action to JSON file for comprehensive audit trail
+                self.mitigation_manager._log_security_action(
+                    action_type='ALLOW',
+                    source_ip=source_ip,
+                    dest_ip=dest_ip,
+                    reason=security_result['reason'],
+                    flow_stats=stat,
+                    security_result=security_result
+                )
                 continue
                 
             elif security_result['action'] == 'BLOCK':
                 self.logger.warning(f"🚫 {security_result['reason']}: {source_ip} - BLOCKED")
+                
+                # Update processing tracker to avoid redundant blocking
+                self.recently_processed[source_ip] = current_time
+                
+                # Log BLOCK action to JSON file for comprehensive audit trail
+                self.mitigation_manager._log_security_action(
+                    action_type='BLOCK',
+                    source_ip=source_ip,
+                    dest_ip=dest_ip,
+                    reason=security_result['reason'],
+                    flow_stats=stat,
+                    security_result=security_result
+                )
+                
                 if security_result.get('add_to_blacklist'):
                     self.blacklist.add(source_ip)
                     
@@ -409,6 +479,11 @@ class AnomalyDetectionController(app_manager.RyuApp):
                 # Check if we should analyze this flow for attacks
                 if not self._should_analyze_flow_for_attacks(source_ip, dest_ip):
                     continue  # Skip server response traffic
+                
+                # Skip analysis if source is currently blacklisted in mitigation manager
+                if source_ip and source_ip in self.mitigation_manager.blacklist:
+                    self.logger.debug(f"⚠️ SKIP: {source_ip} currently blacklisted in mitigation manager")
+                    continue
                     
                 self.logger.debug(f"[ML ANALYSIS] Analyzing flow: packets={stat.packet_count}")
                 is_anomaly, confidence = self.flow_classifier.classify_flow(stat)
@@ -417,7 +492,25 @@ class AnomalyDetectionController(app_manager.RyuApp):
                 if is_anomaly:
                     self.logger.warning(f"🚨 THREAT DETECTED: {stat.match} (Confidence: {confidence:.3f})")
                     
+                    # Handle flows based on available identifiers
                     if source_ip:
+                        # Check if this source was recently processed to avoid mitigation loops
+                        if source_ip in self.recently_processed:
+                            time_since_processed = current_time - self.recently_processed[source_ip]
+                            if time_since_processed < 60:  # Longer cooldown for ML mitigation (60s)
+                                self.logger.debug(f"⚠️ SKIP ML MITIGATION: {source_ip} recently processed "
+                                                f"({time_since_processed:.1f}s ago)")
+                                continue
+                        
+                        # Additional check: Skip if source was recently unblocked by mitigation manager
+                        if hasattr(self.mitigation_manager, 'recently_unblocked'):
+                            if source_ip in self.mitigation_manager.recently_unblocked:
+                                unblock_time = self.mitigation_manager.recently_unblocked[source_ip]
+                                if current_time - unblock_time < 120:  # 2-minute grace period after unblock
+                                    self.logger.debug(f"⚠️ SKIP ML MITIGATION: {source_ip} recently unblocked "
+                                                    f"({current_time - unblock_time:.1f}s ago)")
+                                    continue
+                        
                         self.logger.info(f"🛡️ APPLYING MITIGATION: {source_ip}")
                         mitigation_action = self.mitigation_manager.risk_based_mitigation(
                             flow_stats=stat,
@@ -427,6 +520,9 @@ class AnomalyDetectionController(app_manager.RyuApp):
                         )
                         
                         if mitigation_action:
+                            # Update processing tracker to prevent mitigation loops
+                            self.recently_processed[source_ip] = current_time
+                            
                             self.logger.info(f"🛡️ MITIGATION APPLIED: {mitigation_action['action']} "
                                            f"for {source_ip} (Risk: {mitigation_action['risk_level']})")
                             
@@ -438,19 +534,14 @@ class AnomalyDetectionController(app_manager.RyuApp):
                         else:
                             self.logger.warning(f"⚠️ MITIGATION FAILED: Unable to apply response for {source_ip}")
                     
-                    # Handle Layer 2 anomalies (MAC-based threats)
+                    # Handle flows without source IP (L2-only flows)
                     else:
                         source_mac = self._extract_source_mac(stat)
-                        if source_mac and source_mac != '00:00:00:00:00:01':
-                            self.logger.info(f"⚠️ L2 ANOMALY: MAC {source_mac} - logging security event")
-                            self.mitigation_manager.log_l2_anomaly(
-                                source_mac=source_mac,
-                                confidence=confidence,
-                                flow_stats=stat
-                            )
-                        elif not source_mac:
-                            self.logger.warning("⚠️ UNIDENTIFIED ANOMALY: No source identifier available")
-                            self.mitigation_manager.log_unidentified_anomaly(confidence, stat)
+                        if source_mac and source_mac != '00:00:00:00:00:01' and confidence > 0.20:
+                            self.logger.warning(f"🚨 L2 ANOMALY: MAC {source_mac} (Confidence: {confidence:.3f})")
+                            self._handle_l2_anomaly(source_mac, confidence, stat, ev.msg.datapath, current_time)
+                        else:
+                            self.logger.debug(f"⚠️ UNHANDLED ANOMALY: No actionable identifier (MAC: {source_mac}, Confidence: {confidence:.3f})")
                     
                     # Emergency flow removal for very high confidence threats
                     if confidence > 0.9 and source_ip:
@@ -694,6 +785,111 @@ class AnomalyDetectionController(app_manager.RyuApp):
         )
         datapath.send_msg(mod)
         self.logger.info(f"🚫 FLOW REMOVED: Security enforcement on switch {datapath.id}")
+
+    def _remove_l2_flow(self, datapath, source_mac, confidence):
+        """
+        Remove Layer 2 flows for MAC-based security enforcement.
+        
+        Handles MAC-based flow removal when IP-level mitigation is not possible.
+        This method targets specific Layer 2 flows from malicious MAC addresses
+        while maintaining network connectivity for legitimate traffic.
+        
+        Args:
+            datapath: Target OpenFlow switch connection
+            source_mac (str): Source MAC address to block
+            confidence (float): ML confidence score for logging
+        """
+        try:
+            ofproto = datapath.ofproto
+            parser = datapath.ofproto_parser
+            
+            # Remove all flows from this MAC address
+            match = parser.OFPMatch(eth_src=source_mac)
+            mod = parser.OFPFlowMod(
+                datapath=datapath,
+                command=ofproto.OFPFC_DELETE,
+                out_port=ofproto.OFPP_ANY,
+                out_group=ofproto.OFPG_ANY,
+                match=match
+            )
+            datapath.send_msg(mod)
+            
+            # Install drop rule for this MAC address
+            drop_match = parser.OFPMatch(eth_src=source_mac)
+            drop_actions = []  # Empty actions = drop
+            self.add_flow(datapath, 32766, drop_match, drop_actions)  # High priority drop rule
+            
+            self.logger.warning(f"🚫 L2 FLOW BLOCKED: MAC {source_mac} on switch {datapath.id} "
+                              f"(Confidence: {confidence:.3f})")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to remove L2 flow for MAC {source_mac}: {e}")
+
+    def _handle_l2_anomaly(self, source_mac, confidence, stat, datapath, current_time):
+        """
+        Centralized handler for Layer 2 anomaly mitigation.
+        
+        Processes high-confidence MAC-based anomalies with comprehensive mitigation
+        strategies including MAC-to-IP resolution and direct L2 flow blocking.
+        
+        Args:
+            source_mac (str): Source MAC address of the anomalous flow
+            confidence (float): ML confidence score for the anomaly
+            stat: OpenFlow flow statistics
+            datapath: OpenFlow datapath for enforcement
+            current_time (float): Current timestamp for tracking
+        """
+        try:
+            self.logger.warning(f"🛡️ APPLYING L2 MITIGATION: MAC {source_mac}")
+            
+            # Try to resolve MAC to IP for enhanced mitigation
+            resolved_ip = self.mac_to_ip.get(source_mac)
+            if resolved_ip:
+                self.logger.info(f"🔍 MAC RESOLVED: {source_mac} -> {resolved_ip}")
+                
+                # Apply IP-based mitigation using resolved address
+                mitigation_action = self.mitigation_manager.risk_based_mitigation(
+                    flow_stats=stat,
+                    ml_confidence=confidence,
+                    source_ip=resolved_ip,
+                    dest_ip=self._extract_dest_ip(stat)
+                )
+                
+                if mitigation_action:
+                    self.recently_processed[resolved_ip] = current_time
+                    self.logger.info(f"🛡️ L2->IP MITIGATION: {mitigation_action['action']} for {resolved_ip}")
+                    
+                    if (mitigation_action['action'] == 'BLOCK' or 
+                        mitigation_action.get('risk_level') == 'critical'):
+                        self.blacklist.add(resolved_ip)
+                        self.logger.info(f"🚫 AUTO-BLACKLIST: {resolved_ip} (L2 origin: {source_mac})")
+                else:
+                    # Fallback: Remove the L2 flow directly
+                    self._remove_l2_flow(datapath, source_mac, confidence)
+            else:
+                # MAC-only mitigation: Remove the specific L2 flow
+                self.logger.warning(f"🚫 L2 DIRECT MITIGATION: Removing MAC {source_mac} flow")
+                self._remove_l2_flow(datapath, source_mac, confidence)
+                
+                # Log L2 mitigation action to JSON
+                self.mitigation_manager._log_security_action(
+                    action_type='L2_BLOCK',
+                    source_ip=source_mac,  # Use MAC as identifier
+                    dest_ip=self._extract_dest_ip(stat),
+                    reason=f'High-confidence L2 anomaly (MAC-based blocking)',
+                    flow_stats=stat,
+                    security_result={'confidence': confidence, 'mac_based': True}
+                )
+            
+            # Always log L2 anomaly for audit trail
+            self.mitigation_manager.log_l2_anomaly(
+                source_mac=source_mac,
+                confidence=confidence,
+                flow_stats=stat
+            )
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling L2 anomaly for MAC {source_mac}: {e}")
 
     # ==================== SECURITY ANALYTICS AND MANAGEMENT INTERFACE ====================
     
